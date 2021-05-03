@@ -255,6 +255,85 @@ class SetCriterion(nn.Module):
         return losses
 
 
+class LabelSmoothing(nn.Module):
+    """
+    NLL loss with label smoothing.
+    """
+    def __init__(self, smoothing=0.0):
+        """
+        Constructor for the LabelSmoothing module.
+        :param smoothing: label smoothing factor
+        """
+        super(LabelSmoothing, self).__init__()
+        self.confidence = 1.0 - smoothing
+        self.smoothing = smoothing
+    def forward(self, x, target):
+
+        logprobs = torch.nn.functional.log_softmax(x, dim=-1)
+        nll_loss = -logprobs.gather(dim=-1, index=target.unsqueeze(1))
+        nll_loss = nll_loss.squeeze(1)
+        smooth_loss = -logprobs.mean(dim=-1)
+        loss = self.confidence * nll_loss + self.smoothing * smooth_loss
+        return loss.mean()
+
+
+class SWiGCriterion(nn.Module):
+    """ This class computes the loss for DETR with SWiG dataset.
+    """
+    def __init__(self, num_classes):
+        """ Create the criterion.
+        """
+        super().__init__()
+        self.num_classes = num_classes
+        # self.weight_dict = weight_dict
+        self.loss_function = LabelSmoothing(0.2)
+
+    def forward(self, outputs, targets):
+        """ This performs the loss computation.
+        Parameters:
+             outputs: dict of tensors, see the output specification of the model for the format
+             targets: list of dicts, such that len(targets) == batch_size.
+                      The expected keys in each dict depends on the losses applied, see each loss' doc
+        """
+        import pdb
+        pdb.set_trace()
+        outputs["pred_logits"]
+        # batch_size x num_queries x (num_classes + 1)
+        outputs["pred_boxes"]
+        # batch_size x num_queries x 4
+        # outputs["aux_outputs"]
+
+        targets[0]['verbs']  # ()
+        targets[0]['roles']  # (1~6,)
+        targets[0]['labels']  # (6 x 3)
+        targets[0]['boxes']  # (6 x 4)
+        assert 'pred_logits' in outputs
+        src_logits = outputs['pred_logits']  # batch_size x 190 x 9930
+        target_classes = torch.stack([t["labels"] for t in targets])  # batch_size x 6 x 3 
+
+        noun_loss = 0
+        for i in range(6):
+            for noun_index in range(3):
+                noun_gt = target_classes[:, i, noun_index]
+                noun_loss += self.loss_function(src_logits, noun_gt.squeeze().long().cuda())
+
+
+        # for reference
+        # target_classes = torch.full(src_logits.shape[:2], self.num_classes,
+        #                             dtype=torch.int64, device=src_logits.device)
+        # # no object padding
+        # target_classes = torch.full(outputs['pred_logits'].shape[:2], self.num_classes, dtype=torch.int64, device=outputs['pred_logits'].device)
+        # target_classes = torch.cat()
+        # target_classes[idx] = target_classes_o
+
+        # loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
+        # losses = {'loss_ce': loss_ce}
+
+        # loss_ce = F.cross_entropy(outputs['pred_logits'].transpose(1, 2), target_classes, self.empty_weight)
+
+        # if log:
+        #     # TODO this should probably be a separate loss, not hacked in this one here
+        #     losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
 class PostProcess(nn.Module):
     """ This module converts the model's output into the format expected by the coco api"""
     @torch.no_grad()
@@ -315,6 +394,9 @@ def build(args):
         # for panoptic, we just add a num_classes that is large enough to hold
         # max_obj_id + 1, but the exact value doesn't really matter
         num_classes = 250
+    elif args.dataset_file == "swig":
+        num_classes = args.num_classes
+        assert args.num_queries == 190  # 190 or 504+190
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -330,7 +412,6 @@ def build(args):
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
-    matcher = build_matcher(args)
     weight_dict = {'loss_ce': 1, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:
@@ -346,9 +427,13 @@ def build(args):
     losses = ['labels', 'boxes', 'cardinality']
     if args.masks:
         losses += ["masks"]
-    criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
-                             eos_coef=args.eos_coef, losses=losses)
-    criterion.to(device)
+    if args.dataset_file != "swig":
+        matcher = build_matcher(args)
+        criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
+                                eos_coef=args.eos_coef, losses=losses)
+        criterion.to(device)
+    else:
+        criterion = SWiGCriterion(num_classes)
     postprocessors = {'bbox': PostProcess()}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()

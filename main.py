@@ -119,6 +119,10 @@ def main(args):
     np.random.seed(seed)
     random.seed(seed)
 
+    dataset_train = build_dataset(image_set='train', args=args)
+    dataset_val = build_dataset(image_set='val', args=args)
+    if args.dataset_file == "swig":
+        args.num_classes = dataset_train.num_nouns()
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
@@ -126,6 +130,7 @@ def main(args):
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
+        assert args.dataset_file != "swig"
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
 
@@ -140,8 +145,6 @@ def main(args):
                                   weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
-    dataset_train = build_dataset(image_set='train', args=args)
-    dataset_val = build_dataset(image_set='val', args=args)
 
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
