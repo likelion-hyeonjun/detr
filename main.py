@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
-from engine import evaluate, train_one_epoch
+from engine import evaluate, train_one_epoch, evaluate_swig
 from models import build_model
 
 
@@ -52,7 +52,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=100, type=int,
+    parser.add_argument('--num_queries', default=190, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -79,9 +79,10 @@ def get_args_parser():
                         help="Relative classification weight of the no-object class")
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default='coco')
+    parser.add_argument('--dataset_file', default='swig')
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
+    parser.add_argument('--swig_path', type=str, default="SWiG")
     parser.add_argument('--remove_difficult', action='store_true')
 
     parser.add_argument('--output_dir', default='',
@@ -149,19 +150,30 @@ def main(args):
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
-    batch_sampler_train = torch.utils.data.BatchSampler(
-        sampler_train, args.batch_size, drop_last=True)
+    if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+        batch_sampler_train = torch.utils.data.BatchSampler(
+            sampler_train, args.batch_size, drop_last=True)
 
-    data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                   collate_fn=utils.collate_fn, num_workers=args.num_workers)
-    data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
-                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+        data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
+                                    collate_fn=utils.collate_fn, num_workers=args.num_workers)
+        data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
+                                    drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+    elif args.dataset_file == "swig":
+        from datasets.swig import AspectRatioBasedSampler, collater
+        # time too long
+        batch_sampler_train = AspectRatioBasedSampler(dataset_train, batch_size=args.batch_size, drop_last=True)
+        data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers, collate_fn=collater, batch_sampler=batch_sampler_train)
+        batch_sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=args.batch_size, drop_last=True)  # TODO check drop_last
+        data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers, drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
+        # batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
+        # data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers, collate_fn=collater, batch_sampler=batch_sampler_train)
+        # data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers, drop_last=False, collate_fn=collater, batch_sampler=sampler_val)
 
     if args.dataset_file == "coco_panoptic":
         # We also evaluate AP during panoptic training, on original coco DS
         coco_val = datasets.coco.build("val", args)
         base_ds = get_coco_api_from_dataset(coco_val)
-    else:
+    elif args.dataset_file == 'coco':
         base_ds = get_coco_api_from_dataset(dataset_val)
 
     if args.frozen_weights is not None:
@@ -182,10 +194,21 @@ def main(args):
             args.start_epoch = checkpoint['epoch'] + 1
 
     if args.eval:
-        test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
+        if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+            test_stats, evaluator = evaluate(model, criterion, postprocessors,
                                               data_loader_val, base_ds, device, args.output_dir)
+        elif args.dataset_file == "swig":
+            assert False
+            # TODO
+            test_stats, evaluator = evaluate_swig(model, criterion, postprocessors,
+                                                data_loader_val, device, args.output_dir)
         if args.output_dir:
-            utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+            if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+                utils.save_on_master(evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+            elif args.dataset_file == "swig":
+                assert False
+                # TODO
+                utils.save_on_master(evaluator.swig_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
     print("Start training")
@@ -211,9 +234,14 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
-        test_stats, coco_evaluator = evaluate(
-            model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
-        )
+        if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+            test_stats, evaluator = evaluate(model, criterion, postprocessors,
+                                                data_loader_val, base_ds, device, args.output_dir)
+        elif args.dataset_file == "swig":
+            assert False
+            # TODO
+            test_stats, evaluator = evaluate_swig(model, criterion, postprocessors,
+                                                data_loader_val, device, args.output_dir)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
@@ -225,14 +253,25 @@ def main(args):
                 f.write(json.dumps(log_stats) + "\n")
 
             # for evaluation logs
-            if coco_evaluator is not None:
+            if evaluator is not None:
                 (output_dir / 'eval').mkdir(exist_ok=True)
-                if "bbox" in coco_evaluator.coco_eval:
-                    filenames = ['latest.pth']
+                if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+                    if "bbox" in evaluator.coco_eval:
+                        filenames = ['latest.pth']
                     if epoch % 50 == 0:
                         filenames.append(f'{epoch:03}.pth')
                     for name in filenames:
-                        torch.save(coco_evaluator.coco_eval["bbox"].eval,
+                            torch.save(evaluator.coco_eval["bbox"].eval,
+                                    output_dir / "eval" / name)
+                elif args.dataset_file == "swig":
+                    assert False
+                    # TODO
+                    if "bbox" in evaluator.swig_eval:
+                        filenames = ['latest.pth']
+                        if epoch % 50 == 0:
+                            filenames.append(f'{epoch:03}.pth')
+                        for name in filenames:
+                            torch.save(evaluator.swig_eval["bbox"].eval,
                                    output_dir / "eval" / name)
 
     total_time = time.time() - start_time

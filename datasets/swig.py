@@ -6,6 +6,7 @@ import numpy as np
 import random
 import csv
 import pdb
+from pathlib import Path
 
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
@@ -20,23 +21,28 @@ import skimage
 import json
 import cv2
 from PIL import Image
+import util
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 class CSVDataset(Dataset):
     """CSV dataset."""
 
-    def __init__(self, train_file, class_list, verb_info, is_training, inference=False, inference_verbs=None, transform=None, is_visualizing=False):
+    def __init__(self, img_folder, train_file, class_list, verb_path, role_path, verb_info, is_training, inference=False, inference_verbs=None, transform=None, is_visualizing=False):
         """
         Args:
             train_file (string): CSV file with training annotations
             annotations (string): CSV file with class list
             test_file (string, optional): CSV file with testing annotations
         """
+        self.img_folder = img_folder
         self.inference = inference
         self.inference_verbs = inference_verbs
         self.train_file = train_file
         self.class_list = class_list
+        self.verb_path = verb_path
+        self.role_path = role_path
+        self.verb_info = verb_info
         self.transform = transform
         self.is_visualizing = is_visualizing
         self.is_training = is_training
@@ -61,16 +67,10 @@ class CSVDataset(Dataset):
                 for line in f:
                     self.image_names.append(line.split('\n')[0])
 
-
-        self.verb_to_idx = {}
-        self.idx_to_verb = []
-        with open('./global_utils/verb_indices.txt') as f:
-            k = 0
-            for line in f:
-                verb = line.split('\n')[0]
-                self.idx_to_verb.append(verb)
-                self.verb_to_idx[verb] = k
-                k += 1
+        with open(self.verb_path, 'r') as f:
+            self.verb_to_idx, self.idx_to_verb = self.load_verb(f)
+        with open(self.role_path, 'r') as f:
+            self.role_to_idx, self.idx_to_role = self.load_role(f)
 
         self.image_to_image_idx = {}
         i = 0
@@ -93,6 +93,29 @@ class CSVDataset(Dataset):
 
         return result, idx_to_result
 
+    def load_verb(self, file):
+        verb_to_idx = {}
+        idx_to_verb = []
+
+        k = 0
+        for line in file:
+            verb = line.split('\n')[0]
+            idx_to_verb.append(verb)
+            verb_to_idx[verb] = k
+            k += 1
+        return verb_to_idx, idx_to_verb
+
+    def load_role(self, file):
+        role_to_idx = {}
+        idx_to_role = []
+
+        k = 0
+        for line in file:
+            role = line.split('\n')[0]
+            idx_to_role.append(role)
+            role_to_idx[role] = k
+            k += 1
+        return role_to_idx, idx_to_role
 
     def make_dummy_annot(self):
         annotations = np.zeros((0, 7))
@@ -128,7 +151,9 @@ class CSVDataset(Dataset):
         verb = verb.split('_')[0]
 
         verb_idx = self.verb_to_idx[verb]
-        sample = {'img': img, 'annot': annot, 'img_name': self.image_names[idx], 'verb_idx': verb_idx}
+        verb_role = self.verb_info[verb]['order']
+        verb_role_idx = [self.role_to_idx[role] for role in verb_role]
+        sample = {'img': img, 'annot': annot, 'img_name': self.image_names[idx], 'verb_idx': verb_idx, 'verb_role_idx': verb_role_idx}
         if self.transform:
             sample = self.transform(sample)
         return sample
@@ -179,7 +204,7 @@ class CSVDataset(Dataset):
             total_anns = 0
             verb = json[image]['verb']
             order = verb_orders[verb]['order']
-            img_file = './images_512/' + image
+            img_file = f"{self.img_folder}/" + image
             result[img_file] = []
             for role in order:
                 total_anns += 1
@@ -241,6 +266,8 @@ def collater(data):
     img_names = [s['img_name'] for s in data]
     verb_indices = [s['verb_idx'] for s in data]
     verb_indices = torch.tensor(verb_indices)
+    verb_role_indices = [s['verb_role_idx'] for s in data]
+    verb_role_indices = [torch.tensor(vri) for vri in verb_role_indices]
 
     widths = [int(s.shape[0]) for s in imgs]
     heights = [int(s.shape[1]) for s in imgs]
@@ -272,8 +299,12 @@ def collater(data):
 
     padded_imgs = padded_imgs.permute(0, 3, 1, 2)
 
-    return {'img': padded_imgs, 'annot': annot_padded, 'scale': scales, 'img_name': img_names, 'verb_idx': verb_indices,
-            'widths': torch.tensor(widths).float(), 'heights': torch.tensor(heights).float(), 'shift_0': shift_0, 'shift_1': shift_1}
+    return (util.misc.nested_tensor_from_tensor_list(padded_imgs),
+            [{'verbs': vi,
+              'roles': vri,
+              'boxes': util.box_ops.box_xyxy_to_cxcywh(annot[:, :4]) / torch.tensor([w, h, w, h], dtype=torch.float32), 
+              'labels': annot[:, -3:]}
+              for vi, vri, annot, w, h in zip(verb_indices, verb_role_indices, annot_padded, widths, heights)])
 
 
 class Resizer(object):
@@ -321,7 +352,7 @@ class Resizer(object):
         annots[:, 3][annots[:, 3] > 0] = annots[:, 3][annots[:, 3] > 0] + shift_0
 
 
-        return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': scale, 'img_name': image_name, 'verb_idx': sample['verb_idx'], 'shift_1': shift_1, 'shift_0': shift_0}
+        return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': scale, 'img_name': image_name, 'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx'], 'shift_1': shift_1, 'shift_0': shift_0}
 
 
 class Augmenter(object):
@@ -342,9 +373,9 @@ class Augmenter(object):
             annots[:, 0][annots[:, 0] > 0] = cols - x2[annots[:, 0] > 0]
             annots[:, 2][annots[:, 2] > 0] = cols - x_tmp[annots[:, 2] > 0]
 
-            sample = {'img': image, 'annot': annots, 'img_name': img_name, 'verb_idx': sample['verb_idx']}
+            sample = {'img': image, 'annot': annots, 'img_name': img_name, 'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx']}
 
-        sample = {'img': image, 'annot': annots, 'img_name': img_name, 'verb_idx': sample['verb_idx']}
+        sample = {'img': image, 'annot': annots, 'img_name': img_name, 'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx']}
 
         return sample
 
@@ -358,7 +389,7 @@ class Normalizer(object):
     def __call__(self, sample):
         image, annots = sample['img'], sample['annot']
 
-        return {'img': ((image.astype(np.float32) - self.mean) / self.std), 'annot': annots, 'img_name': sample['img_name'], 'verb_idx': sample['verb_idx']}
+        return {'img': ((image.astype(np.float32) - self.mean) / self.std), 'annot': annots, 'img_name': sample['img_name'], 'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx']}
 
 
 
@@ -413,3 +444,43 @@ class AspectRatioBasedSampler(Sampler):
         # divide into groups, one group = one batch
         return [[order[x % len(order)] for x in range(i, i + self.batch_size)] for i in
                 range(0, len(order), self.batch_size)]
+
+
+def build(image_set, args):
+    root = Path(args.swig_path)
+    img_folder = root / "images_512"
+
+    PATHS = {
+        "train": root / "SWiG_jsons" / "train.json",
+        "val": root / "SWiG_jsons" / "dev.json",
+        "test": root / "SWiG_jsons" / "test.json",
+    }
+    ann_file = PATHS[image_set]
+
+    classes_file = Path(args.swig_path) / "SWiG_jsons" / "train_classes.csv"
+    verb_path = Path(args.swig_path) / "SWiG_jsons" / "verb_indices.txt"
+    role_path = Path(args.swig_path) / "SWiG_jsons" / "role_indices.txt"
+
+    with open(f'{args.swig_path}/SWiG_jsons/imsitu_space.json') as f:
+        all = json.load(f)
+        verb_orders = all['verbs']
+
+    is_training = image_set == 'train'
+
+    TRANSFORMS = {
+        "train": transforms.Compose([Normalizer(), Augmenter(), Resizer(True)]),
+        "val": transforms.Compose([Normalizer(), Resizer(False)]),
+        "test": transforms.Compose([Normalizer(), Resizer(False)]),
+    }
+    tfs = TRANSFORMS[image_set]
+    
+    dataset = CSVDataset(img_folder=str(img_folder),
+                         train_file=ann_file,
+                         class_list=classes_file,
+                         verb_path=verb_path,
+                         role_path=role_path,
+                         verb_info=verb_orders,
+                         is_training=is_training,
+                         transform=tfs)
+    return dataset
+
