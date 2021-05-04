@@ -8,7 +8,7 @@ from torch import nn
 
 from util import box_ops
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       accuracy, get_world_size, interpolate,
+                       accuracy, accuracy_swig, get_world_size, interpolate,
                        is_dist_avail_and_initialized)
 
 from .backbone import build_backbone
@@ -280,12 +280,12 @@ class LabelSmoothing(nn.Module):
 class SWiGCriterion(nn.Module):
     """ This class computes the loss for DETR with SWiG dataset.
     """
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, weight_dict):
         """ Create the criterion.
         """
         super().__init__()
         self.num_classes = num_classes
-        # self.weight_dict = weight_dict
+        self.weight_dict = weight_dict
         self.loss_function = LabelSmoothing(0.2)
 
     def forward(self, outputs, targets):
@@ -295,45 +295,21 @@ class SWiGCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        import pdb
-        pdb.set_trace()
-        outputs["pred_logits"]
-        # batch_size x num_queries x (num_classes + 1)
-        outputs["pred_boxes"]
-        # batch_size x num_queries x 4
-        # outputs["aux_outputs"]
-
-        targets[0]['verbs']  # ()
-        targets[0]['roles']  # (1~6,)
-        targets[0]['labels']  # (6 x 3)
-        targets[0]['boxes']  # (6 x 4)
         assert 'pred_logits' in outputs
-        src_logits = outputs['pred_logits']  # batch_size x 190 x 9930
-        target_classes = torch.stack([t["labels"] for t in targets])  # batch_size x 6 x 3 
+        batch_noun_loss = []
+        batch_noun_acc = []
+        for b, t in enumerate(targets):
+            role_noun_loss = []
+            for n in range(3):
+                role_noun_loss.append(self.loss_function(outputs['pred_logits'][b, t['roles']], t['labels'][:len(t['roles']), n].long().cuda()))
+            batch_noun_loss.append(sum(role_noun_loss))
+            batch_noun_acc += accuracy_swig(outputs['pred_logits'][b, t['roles']], t['labels'][:len(t['roles'])].long().cuda())
+        noun_loss = torch.stack(batch_noun_loss).sum()
+        acc = torch.stack(batch_noun_acc).mean()
+        
+        return {'loss_ce': noun_loss, 'class_error': 100 - acc}
 
-        noun_loss = 0
-        for i in range(6):
-            for noun_index in range(3):
-                noun_gt = target_classes[:, i, noun_index]
-                noun_loss += self.loss_function(src_logits, noun_gt.squeeze().long().cuda())
 
-
-        # for reference
-        # target_classes = torch.full(src_logits.shape[:2], self.num_classes,
-        #                             dtype=torch.int64, device=src_logits.device)
-        # # no object padding
-        # target_classes = torch.full(outputs['pred_logits'].shape[:2], self.num_classes, dtype=torch.int64, device=outputs['pred_logits'].device)
-        # target_classes = torch.cat()
-        # target_classes[idx] = target_classes_o
-
-        # loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
-        # losses = {'loss_ce': loss_ce}
-
-        # loss_ce = F.cross_entropy(outputs['pred_logits'].transpose(1, 2), target_classes, self.empty_weight)
-
-        # if log:
-        #     # TODO this should probably be a separate loss, not hacked in this one here
-        #     losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
 class PostProcess(nn.Module):
     """ This module converts the model's output into the format expected by the coco api"""
     @torch.no_grad()
@@ -433,7 +409,7 @@ def build(args):
                                 eos_coef=args.eos_coef, losses=losses)
         criterion.to(device)
     else:
-        criterion = SWiGCriterion(num_classes)
+        criterion = SWiGCriterion(num_classes, weight_dict=weight_dict)
     postprocessors = {'bbox': PostProcess()}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()
