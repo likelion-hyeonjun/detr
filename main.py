@@ -200,17 +200,11 @@ def main(args):
             test_stats, evaluator = evaluate(model, criterion, postprocessors,
                                               data_loader_val, base_ds, device, args.output_dir)
         elif args.dataset_file == "swig":
-            assert False
-            # TODO
-            test_stats, evaluator = evaluate_swig(model, criterion, postprocessors,
-                                                data_loader_val, device, args.output_dir)
+            test_stats = evaluate_swig(model, criterion, postprocessors,
+                                       data_loader_val, device, args.output_dir)
         if args.output_dir:
             if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
                 utils.save_on_master(evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
-            elif args.dataset_file == "swig":
-                assert False
-                # TODO
-                utils.save_on_master(evaluator.swig_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
     print("Start training")
@@ -240,10 +234,8 @@ def main(args):
             test_stats, evaluator = evaluate(model, criterion, postprocessors,
                                                 data_loader_val, base_ds, device, args.output_dir)
         elif args.dataset_file == "swig":
-            assert False
-            # TODO
-            test_stats, evaluator = evaluate_swig(model, criterion, postprocessors,
-                                                data_loader_val, device, args.output_dir)
+            test_stats = evaluate_swig(model, criterion, postprocessors,
+                                       data_loader_val, device, args.output_dir)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
@@ -265,16 +257,6 @@ def main(args):
                     for name in filenames:
                             torch.save(evaluator.coco_eval["bbox"].eval,
                                     output_dir / "eval" / name)
-                elif args.dataset_file == "swig":
-                    assert False
-                    # TODO
-                    if "bbox" in evaluator.swig_eval:
-                        filenames = ['latest.pth']
-                        if epoch % 50 == 0:
-                            filenames.append(f'{epoch:03}.pth')
-                        for name in filenames:
-                            torch.save(evaluator.swig_eval["bbox"].eval,
-                                   output_dir / "eval" / name)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
