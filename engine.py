@@ -192,24 +192,24 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
                              **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced['class_error'])
 
-        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        results = postprocessors['bbox'](outputs, orig_target_sizes)
-        if 'segm' in postprocessors.keys():
-            target_sizes = torch.stack([t["size"] for t in targets], dim=0)
-            results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
-        res = {target['image_id'].item(): output for target, output in zip(targets, results)}
+        # orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        # results = postprocessors['bbox'](outputs, orig_target_sizes)
+        # if 'segm' in postprocessors.keys():
+        #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)
+        #     results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
+        # res = {target['image_id'].item(): output for target, output in zip(targets, results)}
         # if coco_evaluator is not None:
         #     coco_evaluator.update(res)
 
-        if panoptic_evaluator is not None:
-            res_pano = postprocessors["panoptic"](outputs, target_sizes, orig_target_sizes)
-            for i, target in enumerate(targets):
-                image_id = target["image_id"].item()
-                file_name = f"{image_id:012d}.png"
-                res_pano[i]["image_id"] = image_id
-                res_pano[i]["file_name"] = file_name
+        # if panoptic_evaluator is not None:
+        #     res_pano = postprocessors["panoptic"](outputs, target_sizes, orig_target_sizes)
+        #     for i, target in enumerate(targets):
+        #         image_id = target["image_id"].item()
+        #         file_name = f"{image_id:012d}.png"
+        #         res_pano[i]["image_id"] = image_id
+        #         res_pano[i]["file_name"] = file_name
 
-            panoptic_evaluator.update(res_pano)
+        #     panoptic_evaluator.update(res_pano)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
