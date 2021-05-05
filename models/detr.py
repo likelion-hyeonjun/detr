@@ -20,35 +20,39 @@ from .transformer import build_transformer
 
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, transformer, num_classes, num_queries, aux_loss=False):
+    def __init__(self, backbone, transformer, num_classes, num_roles, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
             num_classes: number of object classes
-            num_queries: number of object queries, ie detection slot. This is the maximal number of objects
+            num_roles: number of object queries, ie detection slot. This is the maximal number of objects
                          DETR can detect in a single image. For COCO, we recommend 100 queries.
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
-        self.num_queries = num_queries
+        self.num_roles = num_roles
         self.transformer = transformer
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.query_embed = nn.Embedding(num_queries, hidden_dim)
+
+        self.role_embed = nn.Embedding(num_roles, hidden_dim)
+        
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
 
-    def forward(self, samples: NestedTensor):
+    def forward(self, samples: NestedTensor, targets):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
+               - verbs: batched gt verbs of sample images [batch_size x 1]
+               - roles: bathced roles according to gt verbs of sample iamges [batch_size x (max role:6)]
 
             It returns a dict with the following elements:
                - "pred_logits": the classification logits (including no-object) for all queries.
-                                Shape= [batch_size x num_queries x (num_classes + 1)]
+                                Shape= [batch_size x num_roles x (num_classes + 1)]
                - "pred_boxes": The normalized boxes coordinates for all queries, represented as
                                (center_x, center_y, height, width). These values are normalized in [0, 1],
                                relative to the size of each individual image (disregarding possible padding).
@@ -56,19 +60,31 @@ class DETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
+       
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
         features, pos = self.backbone(samples)
 
         src, mask = features[-1].decompose()
         assert mask is not None
-        hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
+        
+        
+        batch_hs = []
 
+        for i in range(src.shape[0]): #batchsize
+            selected_query_embed = self.role_embed.weight[targets[i]['roles']]
+            sliced_hs = self.transformer(self.input_proj(src[i:i+1]), mask[i:i+1], selected_query_embed, pos[-1][i:i+1])[0] # hs : num_layer x 1 x num_queries x hidden_dim
+            padded_hs = F.pad(sliced_hs, (0,0,0,6-len(selected_query_embed)), mode='constant', value=0)
+            batch_hs.append(padded_hs)
+        
+        hs = torch.cat(batch_hs, dim=1)
+        #hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0] # hs : num_layer x batch x num_queries x hidden_dim
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+
         return out
 
     @torch.jit.unused
@@ -298,12 +314,13 @@ class SWiGCriterion(nn.Module):
         assert 'pred_logits' in outputs
         batch_noun_loss = []
         batch_noun_acc = []
-        for b, t in enumerate(targets):
+        for b, (p, t) in enumerate(zip(outputs['pred_logits'], targets)):
+            num_roles = len(t['roles'])
             role_noun_loss = []
             for n in range(3):
-                role_noun_loss.append(self.loss_function(outputs['pred_logits'][b, t['roles']], t['labels'][:len(t['roles']), n].long().cuda()))
+                role_noun_loss.append(self.loss_function(p[:num_roles], t['labels'][:num_roles, n].long().cuda()))
             batch_noun_loss.append(sum(role_noun_loss))
-            batch_noun_acc += accuracy_swig(outputs['pred_logits'][b, t['roles']], t['labels'][:len(t['roles'])].long().cuda())
+            batch_noun_acc += accuracy_swig(p[:num_roles], t['labels'][:num_roles].long().cuda())
         noun_loss = torch.stack(batch_noun_loss).sum()
         acc = torch.stack(batch_noun_acc).mean()
         
@@ -372,7 +389,7 @@ def build(args):
         num_classes = 250
     elif args.dataset_file == "swig":
         num_classes = args.num_classes
-        assert args.num_queries == 190  # 190 or 504+190
+        assert args.num_roles == 190  # 190 or 504+190
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -383,7 +400,7 @@ def build(args):
         backbone,
         transformer,
         num_classes=num_classes,
-        num_queries=args.num_queries,
+        num_roles=args.num_roles,
         aux_loss=args.aux_loss,
     )
     if args.masks:
