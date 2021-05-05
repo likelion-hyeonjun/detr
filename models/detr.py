@@ -307,7 +307,7 @@ class SWiGCriterion(nn.Module):
         noun_loss = torch.stack(batch_noun_loss).sum()
         acc = torch.stack(batch_noun_acc).mean()
         
-        return {'loss_ce': noun_loss, 'class_error': 100 - acc}
+        return {'loss_ce': noun_loss, 'class_error': 100 - acc, 'loss_bbox': outputs['pred_boxes'].sum()*0}
 
 
 class PostProcess(nn.Module):
