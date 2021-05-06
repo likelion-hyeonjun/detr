@@ -35,7 +35,7 @@ class DETR(nn.Module):
         self.num_verbs = num_verbs
         self.transformer = transformer
         hidden_dim = transformer.d_model
-        self.class_embed = nn.Linear(hidden_dim, num_classes) 
+        self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.verb_classification = nn.Linear(hidden_dim, 1)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.query_embed = nn.Embedding(self.num_roles+self.num_verbs, hidden_dim) # 0~503 for verb, 504~693 for role 
