@@ -36,7 +36,7 @@ class DETR(nn.Module):
         self.transformer = transformer
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.verb_classification = nn.Linear(hidden_dim, 1)
+        self.verb_classification = nn.Linear(hidden_dim, 1) 
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.query_embed = nn.Embedding(self.num_roles+self.num_verbs, hidden_dim) # 0~503 for verb, 504~693 for role 
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
@@ -286,7 +286,7 @@ class LabelSmoothing(nn.Module):
 class SWiGCriterion(nn.Module):
     """ This class computes the loss for DETR with SWiG dataset.
     """
-    def __init__(self, num_classes, weight_dict, loss_ratio):
+    def __init__(self, num_classes, weight_dict):
         """ Create the criterion.
         """
         super().__init__()
@@ -296,7 +296,7 @@ class SWiGCriterion(nn.Module):
         self.loss_function_for_verb = LabelSmoothing(0.2)
         self.num_verb = 504
         self.num_roles = 190
-        self.loss_ratio = loss_ratio
+       
 
     def forward(self, outputs, targets):
         """ This performs the loss computation.
@@ -326,7 +326,7 @@ class SWiGCriterion(nn.Module):
         verb_loss = self.loss_function_for_verb(verb_pred_logits, gt_verbs)
         verb_acc = accuracy(verb_pred_logits, gt_verbs)[0]
 
-        return {'loss_vce': verb_loss, 'loss_nce': noun_loss, 'loss_ce': noun_loss+ self.loss_ratio * verb_loss, 'verb_error': verb_acc, 'noun_error': noun_acc, 'class_error': torch.tensor(0).cuda(), 'loss_bbox': outputs['pred_boxes'].sum()*0}
+        return {'loss_vce': verb_loss, 'loss_nce': noun_loss, 'verb_error': verb_acc, 'noun_error': noun_acc, 'class_error': torch.tensor(0).cuda(), 'loss_bbox': outputs['pred_boxes'].sum()*0}
 
 
 class PostProcess(nn.Module):
@@ -407,7 +407,8 @@ def build(args):
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
-    weight_dict = {'loss_ce': 1, 'loss_bbox': args.bbox_loss_coef}
+    weight_dict = {'loss_nce': 1, 'loss_bbox': args.bbox_loss_coef}
+    weight_dict['loss_vce'] = args.loss_ratio
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:
         weight_dict["loss_mask"] = args.mask_loss_coef
@@ -428,7 +429,7 @@ def build(args):
                                 eos_coef=args.eos_coef, losses=losses)
         criterion.to(device)
     else:
-        criterion = SWiGCriterion(num_classes, weight_dict=weight_dict, loss_ratio=args.loss_ratio)
+        criterion = SWiGCriterion(num_classes, weight_dict=weight_dict)
     postprocessors = {'bbox': PostProcess()}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()
