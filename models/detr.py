@@ -286,7 +286,7 @@ class LabelSmoothing(nn.Module):
 class SWiGCriterion(nn.Module):
     """ This class computes the loss for DETR with SWiG dataset.
     """
-    def __init__(self, num_classes, weight_dict):
+    def __init__(self, num_classes, weight_dict, loss_ratio):
         """ Create the criterion.
         """
         super().__init__()
@@ -297,7 +297,7 @@ class SWiGCriterion(nn.Module):
         self.num_verb = 504
         self.num_roles = 190
        
-
+      
     def forward(self, outputs, targets):
         """ This performs the loss computation.
         Parameters:
@@ -327,6 +327,7 @@ class SWiGCriterion(nn.Module):
         verb_acc = accuracy(verb_pred_logits, gt_verbs)[0]
 
         return {'loss_vce': verb_loss, 'loss_nce': noun_loss, 'verb_error': verb_acc, 'noun_error': noun_acc, 'class_error': torch.tensor(0).cuda(), 'loss_bbox': outputs['pred_boxes'].sum()*0}
+
 
 
 class PostProcess(nn.Module):
@@ -429,7 +430,7 @@ def build(args):
                                 eos_coef=args.eos_coef, losses=losses)
         criterion.to(device)
     else:
-        criterion = SWiGCriterion(num_classes, weight_dict=weight_dict)
+        criterion = SWiGCriterion(num_classes, weight_dict=weight_dict, loss_ratio=args.loss_ratio)
     postprocessors = {'bbox': PostProcess()}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()
