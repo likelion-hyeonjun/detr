@@ -251,16 +251,16 @@ def main(args):
                 f.write(json.dumps(log_stats) + "\n")
 
             # for evaluation logs
-            if evaluator is not None:
-                (output_dir / 'eval').mkdir(exist_ok=True)
-                if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
-                    if "bbox" in evaluator.coco_eval:
-                        filenames = ['latest.pth']
-                    if epoch % 50 == 0:
-                        filenames.append(f'{epoch:03}.pth')
-                    for name in filenames:
-                            torch.save(evaluator.coco_eval["bbox"].eval,
-                                    output_dir / "eval" / name)
+            # if evaluator is not None:
+            #     (output_dir / 'eval').mkdir(exist_ok=True)
+            #     if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+            #         if "bbox" in evaluator.coco_eval:
+            #             filenames = ['latest.pth']
+            #         if epoch % 50 == 0:
+            #             filenames.append(f'{epoch:03}.pth')
+            #         for name in filenames:
+            #                 torch.save(evaluator.coco_eval["bbox"].eval,
+            #                         output_dir / "eval" / name)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
