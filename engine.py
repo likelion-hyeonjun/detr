@@ -173,9 +173,7 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
             output_dir=os.path.join(output_dir, "panoptic_eval"),
         )
 
-    for samples, targets in metric_logger.log_every(
-        [data_loader.collate_fn([s]) for s in data_loader.dataset], 10, header):
-        # TODO: data_loader is not terminated properly
+    for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
