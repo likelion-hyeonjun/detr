@@ -279,14 +279,14 @@ class LabelSmoothing(nn.Module):
         nll_loss = -logprobs.gather(dim=-1, index=target.unsqueeze(1))
         nll_loss = nll_loss.squeeze(1)
         smooth_loss = -logprobs.mean(dim=-1)
-        loss = self.confidence * nll_loss + self.smoothing * smooth_loss
-        return loss.mean()
+        loss = self.confidence * nll_loss + self.smoothing * smooth_loss 
+        return loss.mean() 
 
 
 class SWiGCriterion(nn.Module):
     """ This class computes the loss for DETR with SWiG dataset.
     """
-    def __init__(self, num_classes, weight_dict):
+    def __init__(self, num_classes, weight_dict, loss_ratio):
         """ Create the criterion.
         """
         super().__init__()
@@ -296,6 +296,7 @@ class SWiGCriterion(nn.Module):
         self.loss_function_for_verb = LabelSmoothing(0.2)
         self.num_verb = 504
         self.num_roles = 190
+        self.loss_ratio = loss_ratio
 
     def forward(self, outputs, targets):
         """ This performs the loss computation.
@@ -325,7 +326,7 @@ class SWiGCriterion(nn.Module):
         verb_loss = self.loss_function_for_verb(verb_pred_logits, gt_verbs)
         verb_acc = accuracy(verb_pred_logits, gt_verbs)[0]
 
-        return {'loss_vce': verb_loss, 'loss_nce': noun_loss, 'loss_ce': noun_loss+verb_loss, 'verb_error': verb_acc, 'noun_error': noun_acc, 'class_error': 0, 'loss_bbox': outputs['pred_boxes'].sum()*0}
+        return {'loss_vce': verb_loss, 'loss_nce': noun_loss, 'loss_ce': noun_loss+ self.loss_ratio * verb_loss, 'verb_error': verb_acc, 'noun_error': noun_acc, 'class_error': torch.tensor(0).cuda(), 'loss_bbox': outputs['pred_boxes'].sum()*0}
 
 
 class PostProcess(nn.Module):
@@ -427,7 +428,7 @@ def build(args):
                                 eos_coef=args.eos_coef, losses=losses)
         criterion.to(device)
     else:
-        criterion = SWiGCriterion(num_classes, weight_dict=weight_dict)
+        criterion = SWiGCriterion(num_classes, weight_dict=weight_dict, loss_ratio=args.loss_ratio)
     postprocessors = {'bbox': PostProcess()}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()
