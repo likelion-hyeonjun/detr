@@ -177,7 +177,7 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-        outputs = model(samples)
+        outputs = model(samples, targets)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
 
