@@ -36,9 +36,7 @@ class DETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-
         self.role_embed = nn.Embedding(num_roles, hidden_dim)
-        
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
@@ -68,17 +66,14 @@ class DETR(nn.Module):
         src, mask = features[-1].decompose()
         assert mask is not None
         
-        
         batch_hs = []
-
         for i in range(src.shape[0]): #batchsize
             selected_query_embed = self.role_embed.weight[targets[i]['roles']]
             sliced_hs = self.transformer(self.input_proj(src[i:i+1]), mask[i:i+1], selected_query_embed, pos[-1][i:i+1])[0] # hs : num_layer x 1 x num_queries x hidden_dim
             padded_hs = F.pad(sliced_hs, (0,0,0,6-len(selected_query_embed)), mode='constant', value=0)
             batch_hs.append(padded_hs)
-        
         hs = torch.cat(batch_hs, dim=1)
-        #hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0] # hs : num_layer x batch x num_queries x hidden_dim
+
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
