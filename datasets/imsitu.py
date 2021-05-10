@@ -28,7 +28,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 class CSVDataset(Dataset):
     """CSV dataset."""
 
-    def __init__(self, img_folder, train_file, class_list, verb_path, role_path, verb_info, is_training, inference=False, inference_verbs=None, transform=None, is_visualizing=False):
+    def __init__(self, img_folder, train_file, class_list, verb_path, role_path, verb_info, inference=False, inference_verbs=None, transform=None, is_visualizing=False):
         """
         Args:
             train_file (string): CSV file with training annotations
@@ -45,10 +45,6 @@ class CSVDataset(Dataset):
         self.verb_info = verb_info
         self.transform = transform
         self.is_visualizing = is_visualizing
-        self.is_training = is_training
-
-        self.color_change = transforms.Compose([transforms.ColorJitter(
-            hue=.05, saturation=.05, brightness=0.05), transforms.RandomGrayscale(p=0.3)])
 
         with open(self.class_list, 'r') as file:
             self.classes, self.idx_to_class = self.load_classes(csv.reader(file, delimiter=','))
@@ -118,11 +114,11 @@ class CSVDataset(Dataset):
         return role_to_idx, idx_to_role
 
     def make_dummy_annot(self):
-        annotations = np.zeros((0, 7))
+        annotations = np.zeros((0, 3))
 
         # parse annotations
         for idx in range(6):
-            annotation = np.zeros((1, 7))  # allow for 3 annotations
+            annotation = np.zeros((1, 3))  # allow for 3 annotations
 
             annotations = np.append(annotations, annotation, axis=0)
 
@@ -153,25 +149,19 @@ class CSVDataset(Dataset):
         sample = {'img': img, 'annot': annot,
                   'img_name': self.image_names[idx], 'verb_idx': verb_idx, 'verb_role_idx': verb_role_idx}
         if self.transform:
-            sample = self.transform(sample)
+            sample['img'] = self.transform(sample['img'])
         return sample
 
     def load_image(self, image_index):
 
         im = Image.open(self.image_names[image_index])
         im = im.convert('RGB')
-
-        if self.is_training:
-            im = np.array(self.color_change(im))
-        else:
-            im = np.array(im)
-
-        return im.astype(np.float32) / 255.0
+        return im
 
     def load_annotations(self, image_index):
         # get ground truth annotations
         annotation_list = self.image_data[self.image_names[image_index]]
-        annotations = np.zeros((0, 7))
+        annotations = np.zeros((0, 3))
 
         # some images appear to miss annotations (like image with id 257034)
         if len(annotation_list) == 0:
@@ -179,16 +169,11 @@ class CSVDataset(Dataset):
 
         # parse annotations
         for idx, a in enumerate(annotation_list):
-            annotation = np.zeros((1, 7))  # allow for 3 annotations
+            annotation = np.zeros((1, 3))  # allow for 3 annotations
 
-            annotation[0, 0] = a['x1']
-            annotation[0, 1] = a['y1']
-            annotation[0, 2] = a['x2']
-            annotation[0, 3] = a['y2']
-
-            annotation[0, 4] = self.name_to_label(a['class1'])
-            annotation[0, 5] = self.name_to_label(a['class2'])
-            annotation[0, 6] = self.name_to_label(a['class3'])
+            annotation[0, 0] = self.name_to_label(a['class1'])
+            annotation[0, 1] = self.name_to_label(a['class2'])
+            annotation[0, 2] = self.name_to_label(a['class3'])
             annotations = np.append(annotations, annotation, axis=0)
 
         return annotations
@@ -204,7 +189,6 @@ class CSVDataset(Dataset):
             result[img_file] = []
             for role in order:
                 total_anns += 1
-                [x1, y1, x2, y2] = json[image]['bb'][role]
                 class1 = json[image]['frames'][0][role]
                 class2 = json[image]['frames'][1][role]
                 class3 = json[image]['frames'][2][role]
@@ -221,17 +205,15 @@ class CSVDataset(Dataset):
                 if class3 not in classes:
                     class3 = 'oov'
                 result[img_file].append(
-                    {'x1': x1, 'x2': x2, 'y1': y1, 'y2': y2, 'class1': class1, 'class2': class2, 'class3': class3})
+                    {'class1': class1, 'class2': class2, 'class3': class3})
 
             while total_anns < 6:
                 total_anns += 1
-                [x1, y1, x2, y2] = [-1, -1, -1, -1]
                 class1 = 'Pad'
                 class2 = 'Pad'
                 class3 = 'Pad'
                 result[img_file].append(
-                    {'x1': x1, 'x2': x2, 'y1': y1, 'y2': y2, 'class1': class1, 'class2': class2, 'class3': class3})
-
+                    {'class1': class1, 'class2': class2, 'class3': class3})
         return result
 
     def name_to_label(self, name):
@@ -254,78 +236,83 @@ class CSVDataset(Dataset):
 def collater(data):
     imgs = [s['img'] for s in data]
     annots = [s['annot'] for s in data]
-    shift_0 = [s['shift_0'] for s in data]
-    shift_1 = [s['shift_1'] for s in data]
 
-    scales = [s['scale'] for s in data]
     img_names = [s['img_name'] for s in data]
     verb_indices = [s['verb_idx'] for s in data]
     verb_indices = torch.tensor(verb_indices)
     verb_role_indices = [s['verb_role_idx'] for s in data]
     verb_role_indices = [torch.tensor(vri) for vri in verb_role_indices]
 
-    widths = [int(s.shape[0]) for s in imgs]
-    heights = [int(s.shape[1]) for s in imgs]
-
-    batch_size = len(imgs)
-    max_width = 704
-    max_height = 704
-
-    padded_imgs = torch.zeros(batch_size, max_width, max_height, 3)
-
-    for i in range(batch_size):
-        img = imgs[i]
-        padded_imgs[i, shift_0[i]:shift_0[i] + img.shape[0], shift_1[i]:shift_1[i] + img.shape[1], :] = img
-
     max_num_annots = max(annot.shape[0] for annot in annots)
 
     if max_num_annots > 0:
 
-        annot_padded = torch.ones((len(annots), max_num_annots, 7)) * -1
+        annot_padded = torch.ones((len(annots), max_num_annots, 3)) * -1
 
         if max_num_annots > 0:
             for idx, annot in enumerate(annots):
                 # print(annot.shape)
                 if annot.shape[0] > 0:
-                    annot_padded[idx, :annot.shape[0], :] = annot
+                    annot_padded[idx, :annot.shape[0], :] = torch.tensor(annot)
     else:
-        annot_padded = torch.ones((len(annots), 1, 7)) * -1
+        annot_padded = torch.ones((len(annots), 1, 3)) * -1
 
-    padded_imgs = padded_imgs.permute(0, 3, 1, 2)
-
-    return (util.misc.nested_tensor_from_tensor_list(padded_imgs),
+    return (util.misc.nested_tensor_from_tensor_list(imgs),
             [{'verbs': vi,
               'roles': vri,
-              'boxes': util.box_ops.box_xyxy_to_cxcywh(annot[:, :4]) / torch.tensor([w, h, w, h], dtype=torch.float32),
-              'labels': annot[:, -3:]}
-             for vi, vri, annot, w, h in zip(verb_indices, verb_role_indices, annot_padded, widths, heights)])
+              'labels': annot}
+             for vi, vri, annot in zip(verb_indices, verb_role_indices, annot_padded)])
 
-class imSituSituation(data.Dataset):
-   def __init__(self, root, annotation_file, encoder, transform=None):
-        self.root = root
-        self.imsitu = annotation_file
-        self.ids = list(self.imsitu.keys())
-        self.encoder = encoder
-        self.transform = transform
-   
-   def index_image(self, index):
-        rv = []
-        index = index.view(-1)
-        for i in range(index.size()[0]):
-          rv.append(self.ids[index[i]])
-        return rv
-      
-   def __getitem__(self, index):
-        imsitu = self.imsitu
-        _id = self.ids[index]
-        ann = self.imsitu[_id]
-       
-        img = Image.open(os.path.join(self.root, _id)).convert('RGB')
-        
-        if self.transform is not None: img = self.transform(img)
-        target = self.encoder.to_tensor([ann])
 
-        return (torch.LongTensor([index]), img, target)
+def build(image_set, args):
+    root = Path(args.imsitu_path)
+    img_folder = root / "resized_256"
 
-   def __len__(self):
-        return len(self.ids)
+    PATHS = {
+        "train": root / "train.json",
+        "val": root / "dev.json",
+        "test": root / "test.json",
+    }
+    ann_file = PATHS[image_set]
+
+    classes_file = Path(args.imsitu_path) / "train_classes.csv"
+    verb_path = Path(args.imsitu_path) / "verb_indices.txt"
+    role_path = Path(args.imsitu_path) / "role_indices.txt"
+
+    with open(f'{args.imsitu_path}/imsitu_space.json') as f:
+        all = json.load(f)
+        verb_orders = all['verbs']
+
+    normalizer = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+    TRANSFORMS = {
+        "train": transforms.Compose([
+            transforms.Scale(224),
+            transforms.RandomCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalizer,
+        ]),
+        "val": transforms.Compose([
+            transforms.Scale(224),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalizer,
+        ]),
+        "test": transforms.Compose([
+            transforms.Scale(224),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalizer,
+        ]),
+    }
+    tfs = TRANSFORMS[image_set]
+
+    dataset = CSVDataset(img_folder=str(img_folder),
+                         train_file=ann_file,
+                         class_list=classes_file,
+                         verb_path=verb_path,
+                         role_path=role_path,
+                         verb_info=verb_orders,
+                         transform=tfs)
+    return dataset
