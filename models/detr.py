@@ -373,6 +373,8 @@ def build(args):
     elif args.dataset_file == "swig":
         num_classes = args.num_classes
         assert args.num_queries == 190  # 190 or 504+190
+        args.decoder_attn_mask = args.role_adj_mat
+
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
