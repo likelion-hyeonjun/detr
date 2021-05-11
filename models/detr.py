@@ -312,9 +312,9 @@ class SWiGCriterion(nn.Module):
             batch_noun_acc += accuracy_swig(outputs['pred_logits'][b, t['roles']],
                                             t['labels'][:len(t['roles'])].long().cuda())
         noun_loss = torch.stack(batch_noun_loss).mean()
-        acc = torch.stack(batch_noun_acc).mean()
+        noun_acc = torch.stack(batch_noun_acc).mean()
 
-        return {'loss_ce': noun_loss, 'class_error': 100 - acc, 'loss_bbox': outputs['pred_boxes'].sum() * 0}
+        return {'loss_ce': noun_loss, 'noun_acc': noun_acc, 'class_error': torch.tensor(0).cuda(), 'loss_bbox': outputs['pred_boxes'].sum() * 0}
 
 
 class PostProcess(nn.Module):
