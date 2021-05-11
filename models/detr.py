@@ -43,6 +43,9 @@ class DETR(nn.Module):
         self.backbone = backbone
         self.aux_loss = aux_loss
 
+        self.avg_pool = nn.AvgPool2d(22)
+        self.verb_classifier = nn.Linear(hidden_dim, 504)
+
     def forward(self, samples: NestedTensor, targets):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -70,18 +73,22 @@ class DETR(nn.Module):
         
         
         batch_hs = []
+        batch_memory = []
 
         for i in range(src.shape[0]): #batchsize
             selected_query_embed = self.role_embed.weight[targets[i]['roles']]
-            sliced_hs = self.transformer(self.input_proj(src[i:i+1]), mask[i:i+1], selected_query_embed, pos[-1][i:i+1])[0] # hs : num_layer x 1 x num_queries x hidden_dim
+            sliced_hs, sliced_memory = self.transformer(self.input_proj(src[i:i+1]), mask[i:i+1], selected_query_embed, pos[-1][i:i+1]) # hs : num_layer x 1 x num_queries x hidden_dim
             padded_hs = F.pad(sliced_hs, (0,0,0,6-len(selected_query_embed)), mode='constant', value=0)
             batch_hs.append(padded_hs)
+            batch_memory.append(sliced_memory)    
         
         hs = torch.cat(batch_hs, dim=1)
-        #hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0] # hs : num_layer x batch x num_queries x hidden_dim
+        memory = torch.cat(batch_memory, dim=0) #bs * c * h * w       
         outputs_class = self.class_embed(hs)
+        outputs_verb = self.avg_pool(memory).squeeze()
+        outputs_verb = self.verb_classifier(outputs_verb)
         outputs_coord = self.bbox_embed(hs).sigmoid()
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'pred_verb': outputs_verb}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
@@ -303,6 +310,7 @@ class SWiGCriterion(nn.Module):
         self.num_classes = num_classes
         self.weight_dict = weight_dict
         self.loss_function = LabelSmoothing(0.2)
+        self.loss_function_for_verb = LabelSmoothing(0.2)
 
     def forward(self, outputs, targets):
         """ This performs the loss computation.
@@ -314,17 +322,25 @@ class SWiGCriterion(nn.Module):
         assert 'pred_logits' in outputs
         batch_noun_loss = []
         batch_noun_acc = []
+        verb_pred_logits = outputs['pred_verb']
+
         for b, (p, t) in enumerate(zip(outputs['pred_logits'], targets)):
             num_roles = len(t['roles'])
             role_noun_loss = []
             for n in range(3):
                 role_noun_loss.append(self.loss_function(p[:num_roles], t['labels'][:num_roles, n].long().cuda()))
-            batch_noun_loss.append(sum(role_noun_loss))
+            batch_noun_loss.append(sum(role_noun_loss)/3)
             batch_noun_acc += accuracy_swig(p[:num_roles], t['labels'][:num_roles].long().cuda())
-        noun_loss = torch.stack(batch_noun_loss).sum()
-        acc = torch.stack(batch_noun_acc).mean()
+        noun_loss = torch.stack(batch_noun_loss).mean()
+        noun_acc = torch.stack(batch_noun_acc).mean()
+
+        gt_verbs = torch.stack([t['verbs'] for t in targets])
+        verb_loss = self.loss_function_for_verb(verb_pred_logits, gt_verbs)
+        verb_acc = accuracy(verb_pred_logits, gt_verbs)[0]
         
-        return {'loss_ce': noun_loss, 'class_error': 100 - acc, 'loss_bbox': outputs['pred_boxes'].sum()*0}
+        return {'loss_vce': verb_loss, 'loss_nce': noun_loss, 'verb_acc': verb_acc, 'noun_acc': noun_acc, 'class_error': torch.tensor(0).cuda(), 'loss_bbox': outputs['pred_boxes'].sum()*0}
+
+       
 
 
 class PostProcess(nn.Module):
@@ -406,6 +422,7 @@ def build(args):
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
     weight_dict = {'loss_ce': 1, 'loss_bbox': args.bbox_loss_coef}
+    weight_dict['loss_vce'] = args.loss_ratio
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:
         weight_dict["loss_mask"] = args.mask_loss_coef
