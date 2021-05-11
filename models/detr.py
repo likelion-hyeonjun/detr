@@ -418,7 +418,7 @@ def build(args):
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
-    weight_dict = {'loss_ce': 1, 'loss_bbox': args.bbox_loss_coef}
+    weight_dict = {'loss_nce': 1, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_vce'] = args.loss_ratio
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:
