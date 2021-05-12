@@ -82,7 +82,7 @@ class DETR(nn.Module):
         hs = torch.cat(batch_hs, dim=1)
         memory = torch.cat(batch_memory, dim=0) #bs * c * h * w       
         outputs_class = self.class_embed(hs)
-        outputs_verb = self.avg_pool(memory).squeeze()
+        outputs_verb = self.avg_pool(memory).squeeze(dim=2).squeeze(dim=2)
         outputs_verb = self.verb_classifier(outputs_verb)
         outputs_coord = self.bbox_embed(hs).sigmoid()
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'pred_verb': outputs_verb}
@@ -106,6 +106,7 @@ class SetCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
+
     def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses):
         """ Create the criterion.
         Parameters:
@@ -279,6 +280,7 @@ class LabelSmoothing(nn.Module):
     """
     NLL loss with label smoothing.
     """
+
     def __init__(self, smoothing=0.0):
         """
         Constructor for the LabelSmoothing module.
@@ -287,6 +289,7 @@ class LabelSmoothing(nn.Module):
         super(LabelSmoothing, self).__init__()
         self.confidence = 1.0 - smoothing
         self.smoothing = smoothing
+
     def forward(self, x, target):
 
         logprobs = torch.nn.functional.log_softmax(x, dim=-1)
@@ -300,6 +303,7 @@ class LabelSmoothing(nn.Module):
 class SWiGCriterion(nn.Module):
     """ This class computes the loss for DETR with SWiG dataset.
     """
+
     def __init__(self, num_classes, weight_dict):
         """ Create the criterion.
         """
@@ -437,7 +441,7 @@ def build(args):
     if args.dataset_file != "swig":
         matcher = build_matcher(args)
         criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
-                                eos_coef=args.eos_coef, losses=losses)
+                                 eos_coef=args.eos_coef, losses=losses)
         criterion.to(device)
     else:
         criterion = SWiGCriterion(num_classes, weight_dict=weight_dict)
