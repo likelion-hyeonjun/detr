@@ -97,6 +97,7 @@ class SetCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
+
     def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses):
         """ Create the criterion.
         Parameters:
@@ -270,6 +271,7 @@ class LabelSmoothing(nn.Module):
     """
     NLL loss with label smoothing.
     """
+
     def __init__(self, smoothing=0.0):
         """
         Constructor for the LabelSmoothing module.
@@ -278,6 +280,7 @@ class LabelSmoothing(nn.Module):
         super(LabelSmoothing, self).__init__()
         self.confidence = 1.0 - smoothing
         self.smoothing = smoothing
+
     def forward(self, x, target):
 
         logprobs = torch.nn.functional.log_softmax(x, dim=-1)
@@ -291,6 +294,7 @@ class LabelSmoothing(nn.Module):
 class SWiGCriterion(nn.Module):
     """ This class computes the loss for DETR with SWiG dataset.
     """
+
     def __init__(self, num_classes, weight_dict):
         """ Create the criterion.
         """
@@ -316,10 +320,10 @@ class SWiGCriterion(nn.Module):
                 role_noun_loss.append(self.loss_function(p[:num_roles], t['labels'][:num_roles, n].long().cuda()))
             batch_noun_loss.append(sum(role_noun_loss))
             batch_noun_acc += accuracy_swig(p[:num_roles], t['labels'][:num_roles].long().cuda())
-        noun_loss = torch.stack(batch_noun_loss).sum()
-        acc = torch.stack(batch_noun_acc).mean()
-        
-        return {'loss_ce': noun_loss, 'class_error': 100 - acc, 'loss_bbox': outputs['pred_boxes'].sum()*0}
+        noun_loss = torch.stack(batch_noun_loss).mean()
+        noun_acc = torch.stack(batch_noun_acc).mean()
+
+        return {'loss_ce': noun_loss, 'noun_acc': noun_acc, 'class_error': torch.tensor(0.).cuda(), 'loss_bbox': outputs['pred_boxes'].sum() * 0}
 
 
 class PostProcess(nn.Module):
@@ -418,7 +422,7 @@ def build(args):
     if args.dataset_file != "swig":
         matcher = build_matcher(args)
         criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
-                                eos_coef=args.eos_coef, losses=losses)
+                                 eos_coef=args.eos_coef, losses=losses)
         criterion.to(device)
     else:
         criterion = SWiGCriterion(num_classes, weight_dict=weight_dict)
