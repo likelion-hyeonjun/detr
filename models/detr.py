@@ -386,7 +386,7 @@ def build(args):
         # for panoptic, we just add a num_classes that is large enough to hold
         # max_obj_id + 1, but the exact value doesn't really matter
         num_classes = 250
-    elif args.dataset_file == "swig":
+    elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
         num_classes = args.num_classes
         assert args.num_roles == 190  # 190 or 504+190
     device = torch.device(args.device)
@@ -419,7 +419,7 @@ def build(args):
     losses = ['labels', 'boxes', 'cardinality']
     if args.masks:
         losses += ["masks"]
-    if args.dataset_file != "swig":
+    if args.dataset_file != "swig" and args.dataset_file != "imsitu":
         matcher = build_matcher(args)
         criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                                  eos_coef=args.eos_coef, losses=losses)
