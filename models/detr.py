@@ -377,10 +377,7 @@ def build(args):
         # for panoptic, we just add a num_classes that is large enough to hold
         # max_obj_id + 1, but the exact value doesn't really matter
         num_classes = 250
-    elif args.dataset_file == "swig":
-        num_classes = args.num_classes
-        assert args.num_queries == 190  # 190 or 504+190
-    elif args.dataset_file == "imsitu":
+    elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
         num_classes = args.num_classes
         assert args.num_queries == 190  # 190 or 504+190
     device = torch.device(args.device)
