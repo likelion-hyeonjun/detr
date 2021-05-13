@@ -151,7 +151,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     return stats, coco_evaluator
 
 @torch.no_grad()
-def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir):
+def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir, need_weights = True):
     # TODO
     # Need check
     model.eval()
@@ -177,7 +177,7 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-        outputs = model(samples)
+        outputs, attn_weight = model(samples, need_weights = need_weights)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
 
