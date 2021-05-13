@@ -303,9 +303,9 @@ def collater(data):
             [{'verbs': vi,
               'roles': vri,
               'boxes': util.box_ops.box_xyxy_to_cxcywh(annot[:, :4]) / torch.tensor([w, h, w, h], dtype=torch.float32), 
-              'labels': annot[:, -3:]}
-              for vi, vri, annot, w, h in zip(verb_indices, verb_role_indices, annot_padded, widths, heights)])
-
+              'labels': annot[:, -3:],
+              'image_name':img_name}
+             for vi, vri, annot, w, h,img_name in zip(verb_indices, verb_role_indices, annot_padded, widths, heights, img_names)])
 
 class Resizer(object):
     """Convert ndarrays in sample to Tensors."""
