@@ -52,8 +52,10 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
+    parser.add_argument('--num_verbs', default=504, type=int,
+                        help="Number of verb query slots")
     parser.add_argument('--num_roles', default=190, type=int,
-                        help="Number of query slots")
+                        help="Number of role query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
     # * Segmentation
