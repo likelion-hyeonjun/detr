@@ -30,7 +30,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         samples = samples.to(device)
         targets = [{k: v.to(device) if type(k) is not str else v for k, v in t.items()} for t in targets]
 
-        outputs, attn_void, img_attn_void = model(samples)
+        outputs, attn_void, img_attn_void = model(samples, targets)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -151,6 +151,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         stats['PQ_st'] = panoptic_res["Stuff"]
     return stats, coco_evaluator
 
+
 @torch.no_grad()
 def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir, csv_file_name = "", img_csv_file_name="", need_weights = True):
     # TODO
@@ -180,7 +181,7 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
         samples = samples.to(device)
         targets = [{k: v.to(device) if type(k) is not str else v for k, v in t.items()} for t in targets]
 
-        outputs, attn_weight, img_attn_weight = model(samples, need_weights = need_weights)
+        outputs, attn_weight, img_attn_weight = model(samples, targets, need_weights = need_weights)
         
         if need_weights:
             assert attn_weight is not None and img_attn_weight is not None
