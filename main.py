@@ -101,6 +101,12 @@ def get_args_parser():
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+
+    # analysis parameters
+    parser.add_argument('--csv_file', default ="attention_weights.csv",
+                        help='name of attention weight csv file', type=str)
+    parser.add_argument('--extract_attention', action='store_true')
+
     return parser
 
 
@@ -210,7 +216,7 @@ def main(args):
                                              data_loader_val, base_ds, device, args.output_dir)
         elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
             test_stats = evaluate_swig(model, criterion, postprocessors,
-                                       data_loader_val, device, args.output_dir)
+                                       data_loader_val, device, args.output_dir, csv_file_name = args.csv_file, need_weights=args.extract_attention)
         if args.output_dir:
             if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
                 utils.save_on_master(evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")

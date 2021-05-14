@@ -5,6 +5,7 @@ Train and eval functions used in main.py
 import math
 import os
 import sys
+import pandas as pd
 from typing import Iterable
 
 import torch
@@ -151,7 +152,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     return stats, coco_evaluator
 
 @torch.no_grad()
-def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir):
+def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir, csv_file_name = "", need_weights = True):
     # TODO
     # Need check
     model.eval()
@@ -173,11 +174,21 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
             output_dir=os.path.join(output_dir, "panoptic_eval"),
         )
 
+    img_attn_list = []
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) if type(k) is not str else v for k, v in t.items()} for t in targets]
 
-        outputs = model(samples)
+        outputs, attn_weight = model(samples, need_weights = need_weights)
+        import pdb
+        
+        if need_weights:
+            assert attn_weight is not None 
+            attn = pd.DataFrame(attn_weight.cpu().numpy())
+            img_attn_list.append((targets[0]["image_name"].split('/')[2],attn))
+            
+    
+            
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
 
@@ -191,26 +202,14 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
                              **loss_dict_reduced_scaled,
                              **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced['class_error'])
-
-        # orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        # results = postprocessors['bbox'](outputs, orig_target_sizes)
-        # if 'segm' in postprocessors.keys():
-        #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)
-        #     results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
-        # res = {target['image_id'].item(): output for target, output in zip(targets, results)}
-        # if coco_evaluator is not None:
-        #     coco_evaluator.update(res)
-
-        # if panoptic_evaluator is not None:
-        #     res_pano = postprocessors["panoptic"](outputs, target_sizes, orig_target_sizes)
-        #     for i, target in enumerate(targets):
-        #         image_id = target["image_id"].item()
-        #         file_name = f"{image_id:012d}.png"
-        #         res_pano[i]["image_id"] = image_id
-        #         res_pano[i]["file_name"] = file_name
-
-        #     panoptic_evaluator.update(res_pano)
-
+        if len(img_attn_list) >5:
+            break
+    
+    if need_weights:
+        assert csv_file_name is not None
+        img_attn = pd.concat(dict(img_attn_list))
+        img_attn.to_csv(csv_file_name, mode="w")
+    
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
