@@ -338,16 +338,12 @@ class SWiGCriterion(nn.Module):
         for b, (p, t) in enumerate(zip(outputs['pred_logits'], targets)):
             roles = t['roles']
             num_roles = len(roles)
-            if self.gt_role_queries:
-                role_pred = p[:num_roles]
-                role_tagt = t['labels'][:num_roles]
-            else:
-                role_pred = p[roles]
-                role_tagt = t['labels'][roles]
+            role_pred = p[:num_roles] if self.gt_role_queries else p[roles]
+            role_tagt = t['labels'][:num_roles]
             role_tagt = role_tagt.long().cuda()
             role_noun_loss = []
             for n in range(3):
-                role_noun_loss.append(self.loss_function(role_pred, role_tagt[n]))
+                role_noun_loss.append(self.loss_function(role_pred, role_tagt[:, n]))
             batch_noun_loss.append(sum(role_noun_loss))
             batch_noun_acc += accuracy_swig(role_pred, role_tagt)
         noun_loss = torch.stack(batch_noun_loss).mean()
