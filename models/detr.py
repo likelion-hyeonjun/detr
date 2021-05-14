@@ -20,7 +20,8 @@ from .transformer import build_transformer
 
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, transformer, num_classes, num_roles, aux_loss=False):
+
+    def __init__(self, backbone, transformer, num_classes, num_role_queries, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -31,12 +32,12 @@ class DETR(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
-        self.num_roles = num_roles
+        self.num_role_queries = num_role_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.role_embed = nn.Embedding(num_roles, hidden_dim)
+        self.query_embed = nn.Embedding(num_role_queries, hidden_dim)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
@@ -388,7 +389,6 @@ def build(args):
         num_classes = 250
     elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
         num_classes = args.num_classes
-        assert args.num_roles == 190  # 190 or 504+190
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -399,7 +399,7 @@ def build(args):
         backbone,
         transformer,
         num_classes=num_classes,
-        num_roles=args.num_roles,
+        num_role_queries=args.num_role_queries,
         aux_loss=args.aux_loss,
     )
     if args.masks:
