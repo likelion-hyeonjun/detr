@@ -72,7 +72,7 @@ class DETR(nn.Module):
         assert mask is not None
         batch_hs = []
         for i in range(src.shape[0]):  # batchsize
-            if not self.select_gt_role_queries:
+            if not self.gt_role_queries:
                 selected_role_query_embed = self.role_embed.weight
             else:
                 selected_role_query_embed = self.role_embed.weight[targets[i]['roles']]
