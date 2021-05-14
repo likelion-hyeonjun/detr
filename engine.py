@@ -28,9 +28,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [{k: v.to(device) if type(k) is not str else v for k, v in t.items()} for t in targets]
 
-        outputs = model(samples)
+        outputs, attn_void, img_attn_void = model(samples)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -152,7 +152,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     return stats, coco_evaluator
 
 @torch.no_grad()
-def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir, csv_file_name = "", need_weights = True):
+def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir, csv_file_name = "", img_csv_file_name="", need_weights = True):
     # TODO
     # Need check
     model.eval()
@@ -174,18 +174,20 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
             output_dir=os.path.join(output_dir, "panoptic_eval"),
         )
 
+    role_attn_list = []
     img_attn_list = []
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) if type(k) is not str else v for k, v in t.items()} for t in targets]
 
-        outputs, attn_weight = model(samples, need_weights = need_weights)
-        import pdb
+        outputs, attn_weight, img_attn_weight = model(samples, need_weights = need_weights)
         
         if need_weights:
-            assert attn_weight is not None 
-            attn = pd.DataFrame(attn_weight.cpu().numpy())
-            img_attn_list.append((targets[0]["image_name"].split('/')[2],attn))
+            assert attn_weight is not None and img_attn_weight is not None
+            role_attn = pd.DataFrame(attn_weight.cpu().numpy())
+            img_attn = pd.DataFrame(img_attn_weight.cpu().numpy()) #should reshape to  6 * 49 * 190
+            role_attn_list.append((targets[0]["image_name"].split('/')[2],role_attn))
+            img_attn_list.append((targets[0]["image_name"].split('/')[2],img_attn))
             
     
             
@@ -202,13 +204,15 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
                              **loss_dict_reduced_scaled,
                              **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced['class_error'])
-        if len(img_attn_list) >5:
+        if len(role_attn_list) >5:
             break
     
     if need_weights:
         assert csv_file_name is not None
+        role_attn = pd.concat(dict(role_attn_list))
+        role_attn.to_csv(csv_file_name, mode="w")
         img_attn = pd.concat(dict(img_attn_list))
-        img_attn.to_csv(csv_file_name, mode="w")
+        img_attn.to_csv(img_csv_file_name, mode="w")
     
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

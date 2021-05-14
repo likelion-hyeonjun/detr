@@ -64,7 +64,10 @@ class DETR(nn.Module):
         src, mask = features[-1].decompose()
         assert mask is not None
         hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1], need_weights = True)
-        attn = hs[2].squeeze(dim=1).reshape(-1, self.num_queries * self.num_queries)
+
+        if need_weights:
+            attn = hs[2].squeeze(dim=1).reshape(-1, self.num_queries * self.num_queries)
+            img_attn = hs[3].squeeze(dim=1).reshape(-1, hs[3].shape[3] * self.num_queries) #num_decoder * (49 * num_queries)
         hs = hs[0]
 
         outputs_class = self.class_embed(hs)
@@ -74,8 +77,8 @@ class DETR(nn.Module):
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         
         if need_weights:
-            return out, attn
-        return out, None
+            return out, attn, img_attn
+        return out, None, None 
 
     @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord):
@@ -305,7 +308,6 @@ class SWiGCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        assert 'pred_logits' in outputs
         batch_noun_loss = []
         batch_noun_acc = []
         for b, t in enumerate(targets):

@@ -9,6 +9,7 @@ Copy-paste from torch.nn.Transformer with modifications:
 """
 import copy
 from typing import Optional, List
+from numpy import imag
 
 import torch
 import torch.nn.functional as F
@@ -54,9 +55,9 @@ class Transformer(nn.Module):
 
         tgt = torch.zeros_like(query_embed)
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        hs, attn_weight = self.decoder(tgt, memory, memory_key_padding_mask=mask,
+        hs, attn_weight, image_attn_weight = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed, need_weights= need_weights)
-        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w), attn_weight
+        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w), attn_weight, image_attn_weight
 
 
 class TransformerEncoder(nn.Module):
@@ -104,9 +105,10 @@ class TransformerDecoder(nn.Module):
 
         intermediate = []
         attn_weight_list = []
+        image_attn_weight_list = []
 
         for layer in self.layers:
-            output, attn_weight = layer(output, memory, tgt_mask=tgt_mask,
+            output, attn_weight, image_attn_weight = layer(output, memory, tgt_mask=tgt_mask,
                            memory_mask=memory_mask,
                            tgt_key_padding_mask=tgt_key_padding_mask,
                            memory_key_padding_mask=memory_key_padding_mask,
@@ -115,6 +117,7 @@ class TransformerDecoder(nn.Module):
                 intermediate.append(self.norm(output))
             if need_weights:
                 attn_weight_list.append(attn_weight)
+                image_attn_weight_list.append(image_attn_weight)
 
         if self.norm is not None:
             output = self.norm(output)
@@ -123,9 +126,9 @@ class TransformerDecoder(nn.Module):
                 intermediate.append(output)
 
         if self.return_intermediate:
-            return torch.stack(intermediate), torch.stack(attn_weight_list)
+            return torch.stack(intermediate), torch.stack(attn_weight_list), torch.stack(image_attn_weight_list)
 
-        return output.unsqueeze(0), torch.stack(attn_weight_list)
+        return output.unsqueeze(0), torch.stack(attn_weight_list), torch.stack(image_attn_weight_list)
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -226,16 +229,16 @@ class TransformerDecoderLayer(nn.Module):
                               key_padding_mask=tgt_key_padding_mask, need_weights=need_weights)
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
+        tgt2, image_attn_weight = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+                                   key_padding_mask=memory_key_padding_mask, need_weights=need_weights)
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
-        return (tgt, attn_weight) if need_weights else (tgt, None)
+        return (tgt, attn_weight, image_attn_weight) if need_weights else (tgt, None, None)
 
     def forward_pre(self, tgt, memory,
                     tgt_mask: Optional[Tensor] = None,
@@ -251,15 +254,15 @@ class TransformerDecoderLayer(nn.Module):
                               key_padding_mask=tgt_key_padding_mask, need_weights= need_weights)
         tgt = tgt + self.dropout1(tgt2)
         tgt2 = self.norm2(tgt)
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
+        tgt2, image_attn_weight = self.multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+                                   key_padding_mask=memory_key_padding_mask, need_weights= need_weights)
         tgt = tgt + self.dropout2(tgt2)
         tgt2 = self.norm3(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
         tgt = tgt + self.dropout3(tgt2)
-        return (tgt, attn_weight) if need_weights else (tgt, None)
+        return (tgt, attn_weight, image_attn_weight) if need_weights else (tgt, None, None)
 
     def forward(self, tgt, memory,
                 tgt_mask: Optional[Tensor] = None,
@@ -271,9 +274,9 @@ class TransformerDecoderLayer(nn.Module):
                 need_weights = True):
         if self.normalize_before:
             return self.forward_pre(tgt, memory, tgt_mask, memory_mask,
-                                    tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos, need_weights)
+                                    tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos, need_weights, need_weights=need_weights)
         return self.forward_post(tgt, memory, tgt_mask, memory_mask,
-                                 tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos, need_weights)
+                                 tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos, need_weights=need_weights)
 
 
 def _get_clones(module, N):
