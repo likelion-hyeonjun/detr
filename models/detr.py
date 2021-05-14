@@ -86,10 +86,13 @@ class DETR(nn.Module):
                 selected_verb_query_embed = selected_verb_query_embed.tile(selected_role_query_embed.shape[0], 1)
                 selected_query_embed = torch.cat([
                     selected_role_query_embed, selected_verb_query_embed], axis=1)
-            # sliced_hs : num_layer x 1 x num_role_queries x hidden_dim
+            # sliced_hs : num_layer x 1 x num or selected role_queries x hidden_dim
             sliced_hs = self.transformer(
                 self.input_proj(src[i:i + 1]), mask[i:i + 1], selected_query_embed, pos[-1][i:i + 1])[0]
-            padded_hs = F.pad(sliced_hs, (0, 0, 0, 6 - len(selected_query_embed)), mode='constant', value=0)
+            if not self.gt_role_queries:
+                padded_hs = sliced_hs
+            else:
+                padded_hs = F.pad(sliced_hs, (0, 0, 0, 6 - len(selected_query_embed)), mode='constant', value=0)
             batch_hs.append(padded_hs)
         hs = torch.cat(batch_hs, dim=1)
 
