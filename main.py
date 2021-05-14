@@ -54,6 +54,8 @@ def get_args_parser():
                         help="Number of attention heads inside the transformer's attentions")
     parser.add_argument('--num_role_queries', type=int, choices=[190],
                         help="Number of role query slots")
+    parser.add_argument('--gt_role_queries', type="store_true",
+                        help="Select gt role queries")
     parser.add_argument('--pre_norm', action='store_true')
 
     # * Segmentation
