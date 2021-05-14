@@ -153,7 +153,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
 
 
 @torch.no_grad()
-def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir, csv_file_name = "", img_csv_file_name="", need_weights = True):
+def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir, csv_file_name = "", img_csv_file_name="", need_weights = False):
     # TODO
     # Need check
     model.eval()
@@ -205,8 +205,6 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
                              **loss_dict_reduced_scaled,
                              **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced['class_error'])
-        if len(role_attn_list) >5:
-            break
     
     if need_weights:
         assert csv_file_name is not None

@@ -94,8 +94,8 @@ class DETR(nn.Module):
                 self.input_proj(src[i:i + 1]), mask[i:i + 1], selected_query_embed, pos[-1][i:i + 1], need_weights = need_weights)
             
             if need_weights:
-                attn = hs[2].squeeze(dim=1).reshape(-1, len(selected_query_embed) * len(selected_query_embed))
-                img_attn = hs[3].squeeze(dim=1).reshape(-1, hs[3].shape[3] * len(selected_query_embed)) #num_decoder * (49 * num_queries)
+                attn = sliced_hs[2].squeeze(dim=1).reshape(-1, len(selected_query_embed) * len(selected_query_embed))
+                img_attn = sliced_hs[3].squeeze(dim=1).reshape(-1, sliced_hs[3].shape[3] * len(selected_query_embed)) #num_decoder * (49 * num_queries)
             
             sliced_hs = sliced_hs[0]
             

@@ -100,7 +100,7 @@ class TransformerDecoder(nn.Module):
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None, 
-                need_weights =True):
+                need_weights =False):
         output = tgt
 
         intermediate = []
@@ -118,6 +118,8 @@ class TransformerDecoder(nn.Module):
             if need_weights:
                 attn_weight_list.append(attn_weight)
                 image_attn_weight_list.append(image_attn_weight)
+        
+        (attn_weight, image_attn_weight) = (torch.stack(attn_weight_list), torch.stack(image_attn_weight_list)) if need_weights else (None, None)
 
         if self.norm is not None:
             output = self.norm(output)
@@ -126,9 +128,9 @@ class TransformerDecoder(nn.Module):
                 intermediate.append(output)
 
         if self.return_intermediate:
-            return torch.stack(intermediate), torch.stack(attn_weight_list), torch.stack(image_attn_weight_list)
+            return torch.stack(intermediate), attn_weight, image_attn_weight
 
-        return output.unsqueeze(0), torch.stack(attn_weight_list), torch.stack(image_attn_weight_list)
+        return output.unsqueeze(0), attn_weight, image_attn_weight
 
 
 class TransformerEncoderLayer(nn.Module):
