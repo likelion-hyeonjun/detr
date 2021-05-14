@@ -40,8 +40,11 @@ class DETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.verb_embed = nn.Embedding(num_verb_embed, hidden_dim // 2)
-        self.role_embed = nn.Embedding(num_role_queries, hidden_dim // 2)
+        if num_verb_embed == 0:
+            self.role_embed = nn.Embedding(num_role_queries, hidden_dim)
+        else:
+            self.verb_embed = nn.Embedding(num_verb_embed, hidden_dim // 2)
+            self.role_embed = nn.Embedding(num_role_queries, hidden_dim // 2)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
