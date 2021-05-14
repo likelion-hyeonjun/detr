@@ -20,7 +20,7 @@ from .transformer import build_transformer
 
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, transformer, num_classes, num_verbs, num_roles, aux_loss=False):
+    def __init__(self, backbone, transformer, num_classes, num_verb_queries, num_role_queries, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -32,11 +32,12 @@ class DETR(nn.Module):
         """
         super().__init__()
         self.transformer = transformer
+        self.num_verb_queries = num_verb_queries
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.verb_embed = nn.Embedding(num_verbs, hidden_dim // 2)
-        self.role_embed = nn.Embedding(num_roles, hidden_dim // 2)
+        self.verb_embed = nn.Embedding(num_verb_queries, hidden_dim // 2)
+        self.role_embed = nn.Embedding(num_role_queries, hidden_dim // 2)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
@@ -68,7 +69,7 @@ class DETR(nn.Module):
         
         batch_hs = []
         for i in range(src.shape[0]): #batchsize
-            selected_verb_query_embed = self.verb_embed.weight[targets[i]['verbs']]
+            selected_verb_query_embed = self.verb_embed.weight[targets[i]['verbs'] if self.num_verb_queries == 504 else 0]
             selected_role_query_embed = self.role_embed.weight[targets[i]['roles']]
             selected_query_embed = torch.cat([
                 selected_verb_query_embed.tile(selected_role_query_embed.shape[0], 1),
@@ -392,8 +393,6 @@ def build(args):
         num_classes = 250
     elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
         num_classes = args.num_classes
-        assert args.num_verbs == 504
-        assert args.num_roles == 190
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -404,8 +403,8 @@ def build(args):
         backbone,
         transformer,
         num_classes=num_classes,
-        num_verbs=args.num_verbs,
-        num_roles=args.num_roles,
+        num_verb_queries=args.num_verb_queries,
+        num_role_queries=args.num_role_queries,
         aux_loss=args.aux_loss,
     )
     if args.masks:
