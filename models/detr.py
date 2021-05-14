@@ -21,7 +21,7 @@ from .transformer import build_transformer
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
 
-    def __init__(self, backbone, transformer, num_classes, num_role_queries, gt_role_queries, aux_loss=False):
+    def __init__(self, backbone, transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -33,13 +33,15 @@ class DETR(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
+        self.num_verb_embed = num_verb_embed
         self.num_role_queries = num_role_queries
         self.gt_role_queries = gt_role_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.query_embed = nn.Embedding(num_role_queries, hidden_dim)
+        self.verb_embed = nn.Embedding(num_verb_embed, hidden_dim // 2)
+        self.role_embed = nn.Embedding(num_role_queries, hidden_dim // 2)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
@@ -68,18 +70,28 @@ class DETR(nn.Module):
 
         src, mask = features[-1].decompose()
         assert mask is not None
-        if not self.select_gt_role_queries:
-            hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
-        else:
-            batch_hs = []
-            for i in range(src.shape[0]):  # batchsize
-                selected_query_embed = self.role_embed.weight[targets[i]['roles']]
-                # hs : num_layer x 1 x num_queries x hidden_dim
-                sliced_hs = self.transformer(
-                    self.input_proj(src[i:i + 1]), mask[i:i + 1], selected_query_embed, pos[-1][i:i + 1])[0]
-                padded_hs = F.pad(sliced_hs, (0, 0, 0, 6 - len(selected_query_embed)), mode='constant', value=0)
-                batch_hs.append(padded_hs)
-            hs = torch.cat(batch_hs, dim=1)
+        batch_hs = []
+        for i in range(src.shape[0]):  # batchsize
+            if not self.select_gt_role_queries:
+                selected_role_query_embed = self.role_embed.weight
+            else:
+                selected_role_query_embed = self.role_embed.weight[targets[i]['roles']]
+            if self.num_verb_embed == 0:
+                selected_query_embed = selected_role_query_embed
+            else:
+                if self.num_verb_embed == 1:
+                    selected_verb_query_embed = self.verb_embed.weight[0]
+                elif self.num_verb_embed == 504:
+                    selected_verb_query_embed = self.verb_embed.weight[targets[i]['verbs']]
+                selected_verb_query_embed = selected_verb_query_embed.tile(selected_role_query_embed.shape[0], 1)
+                selected_query_embed = torch.cat([
+                    selected_role_query_embed, selected_verb_query_embed], axis=1)
+            # sliced_hs : num_layer x 1 x num_role_queries x hidden_dim
+            sliced_hs = self.transformer(
+                self.input_proj(src[i:i + 1]), mask[i:i + 1], selected_query_embed, pos[-1][i:i + 1])[0]
+            padded_hs = F.pad(sliced_hs, (0, 0, 0, 6 - len(selected_query_embed)), mode='constant', value=0)
+            batch_hs.append(padded_hs)
+        hs = torch.cat(batch_hs, dim=1)
 
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()
@@ -413,6 +425,7 @@ def build(args):
         backbone,
         transformer,
         num_classes=num_classes,
+        num_verb_embed=args.num_verb_embed,
         num_role_queries=args.num_role_queries,
         gt_role_queries=args.gt_role_queries,
         aux_loss=args.aux_loss,
