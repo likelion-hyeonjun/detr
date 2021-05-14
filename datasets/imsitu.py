@@ -260,8 +260,9 @@ def collater(data):
     return (util.misc.nested_tensor_from_tensor_list(imgs),
             [{'verbs': vi,
               'roles': vri,
-              'labels': annot}
-             for vi, vri, annot in zip(verb_indices, verb_role_indices, annot_padded)])
+              'labels': annot,
+              'image_name':img_name}
+             for vi, vri, annot, img_name in zip(verb_indices, verb_role_indices, annot_padded, img_names)])
 
 
 def build(image_set, args):
