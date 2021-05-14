@@ -31,6 +31,8 @@ class DETR(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
+        self.num_verb_queries = num_verb_queries
+        self.num_role_queries = num_role_queries
         self.transformer = transformer
         self.num_verb_queries = num_verb_queries
         hidden_dim = transformer.d_model
@@ -69,7 +71,10 @@ class DETR(nn.Module):
         
         batch_hs = []
         for i in range(src.shape[0]): #batchsize
-            selected_verb_query_embed = self.verb_embed.weight[targets[i]['verbs'] if self.num_verb_queries == 504 else 0]
+            if self.num_verb_queries == 504:
+                selected_verb_query_embed = self.verb_embed.weight[targets[i]['verbs']]
+            elif self.num_verb_queries == 1:
+                selected_verb_query_embed = self.verb_embed.weight[0]
             selected_role_query_embed = self.role_embed.weight[targets[i]['roles']]
             selected_query_embed = torch.cat([
                 selected_verb_query_embed.tile(selected_role_query_embed.shape[0], 1),

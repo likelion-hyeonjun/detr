@@ -175,7 +175,7 @@ def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [{k: v.to(device) if type(k) is not str else v for k, v in t.items()} for t in targets]
 
         outputs = model(samples, targets)
         loss_dict = criterion(outputs, targets)
