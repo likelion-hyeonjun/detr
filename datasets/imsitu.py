@@ -42,7 +42,6 @@ class CSVDataset(Dataset):
         self.class_list = class_list
         self.verb_path = verb_path
         self.role_path = role_path
-        self.verb_info = verb_info
         self.transform = transform
         self.is_visualizing = is_visualizing
 
@@ -74,6 +73,15 @@ class CSVDataset(Dataset):
         for image_name in self.image_names:
             self.image_to_image_idx[image_name] = i
             i += 1
+
+        # verb_role
+        self.verb_role = {verb: value['order'] for verb, value in verb_info.items()}
+
+        # role adjacency matrix
+        self.role_adj_matrix = np.ones((len(self.role_to_idx), len(self.role_to_idx))).astype(bool)
+        for roles in self.verb_role.values():
+            role_indices = np.array([self.role_to_idx[role] for role in roles])
+            self.role_adj_matrix[role_indices[:, None], role_indices] = np.zeros(len(roles)).astype(bool)
 
     def load_classes(self, csv_reader):
         result = {}
@@ -144,8 +152,7 @@ class CSVDataset(Dataset):
         verb = verb.split('_')[0]
 
         verb_idx = self.verb_to_idx[verb]
-        verb_role = self.verb_info[verb]['order']
-        verb_role_idx = [self.role_to_idx[role] for role in verb_role]
+        verb_role_idx = [self.role_to_idx[role] for role in self.verb_role[verb]]
         sample = {'img': img, 'annot': annot,
                   'img_name': self.image_names[idx], 'verb_idx': verb_idx, 'verb_role_idx': verb_role_idx}
         if self.transform:
@@ -316,4 +323,8 @@ def build(image_set, args):
                          role_path=role_path,
                          verb_info=verb_orders,
                          transform=tfs)
+
+    # role adjancency matrix
+    args.role_adj_mat = dataset.role_adj_matrix
+    
     return dataset

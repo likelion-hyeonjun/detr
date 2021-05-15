@@ -379,6 +379,7 @@ def build(args):
         num_classes = 250
     elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
         num_classes = args.num_classes
+        args.decoder_attn_mask = args.role_adj_mat
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
