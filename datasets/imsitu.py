@@ -42,7 +42,6 @@ class CSVDataset(Dataset):
         self.class_list = class_list
         self.verb_path = verb_path
         self.role_path = role_path
-        self.verb_info = verb_info
         self.transform = transform
         self.is_visualizing = is_visualizing
 
@@ -74,6 +73,16 @@ class CSVDataset(Dataset):
         for image_name in self.image_names:
             self.image_to_image_idx[image_name] = i
             i += 1
+
+        # verb_role
+        self.verb_role = {verb: value['order'] for verb, value in verb_info.items()}
+        self.vidx_ridx = [[self.role_to_idx[role] for role in self.verb_role[verb]] for verb in self.idx_to_verb]
+
+        # role adjacency matrix
+        self.role_adj_matrix = np.ones((len(self.role_to_idx), len(self.role_to_idx))).astype(bool)
+        for ridx in self.vidx_ridx:
+            ridx = np.array(ridx)
+            self.role_adj_matrix[ridx[:, None], ridx] = np.zeros(len(ridx)).astype(bool)
 
     def load_classes(self, csv_reader):
         result = {}
@@ -144,8 +153,7 @@ class CSVDataset(Dataset):
         verb = verb.split('_')[0]
 
         verb_idx = self.verb_to_idx[verb]
-        verb_role = self.verb_info[verb]['order']
-        verb_role_idx = [self.role_to_idx[role] for role in verb_role]
+        verb_role_idx = self.vidx_ridx[verb_idx]
         sample = {'img': img, 'annot': annot,
                   'img_name': self.image_names[idx], 'verb_idx': verb_idx, 'verb_role_idx': verb_role_idx}
         if self.transform:
@@ -260,8 +268,9 @@ def collater(data):
     return (util.misc.nested_tensor_from_tensor_list(imgs),
             [{'verbs': vi,
               'roles': vri,
-              'labels': annot}
-             for vi, vri, annot in zip(verb_indices, verb_role_indices, annot_padded)])
+              'labels': annot,
+              'image_name':img_name}
+             for vi, vri, annot, img_name in zip(verb_indices, verb_role_indices, annot_padded, img_names)])
 
 
 def build(image_set, args):
@@ -315,4 +324,8 @@ def build(image_set, args):
                          role_path=role_path,
                          verb_info=verb_orders,
                          transform=tfs)
+
+    # role adjancency matrix
+    args.role_adj_mat = dataset.role_adj_matrix
+    
     return dataset
