@@ -259,7 +259,10 @@ class CSVDataset(Dataset):
 def collater(data):
     imgs = [s['img'] for s in data]
     annots = [s['annot'] for s in data]
+    shift_0 = [s['shift_0'] for s in data]
+    shift_1 = [s['shift_1'] for s in data]
 
+    scales = [s['scale'] for s in data]
     img_names = [s['img_name'] for s in data]
     verb_indices = [s['verb_idx'] for s in data]
     verb_indices = torch.tensor(verb_indices)
@@ -269,6 +272,11 @@ def collater(data):
     widths = [int(s.shape[0]) for s in imgs]
     heights = [int(s.shape[1]) for s in imgs]
 
+    batch_size = len(imgs)
+    chw_imgs = []
+
+    for i in range(batch_size):
+        chw_imgs[i] = torch.tensor(imgs[i]).permute(0, 3, 1, 2)
     max_num_annots = max(annot.shape[0] for annot in annots)
 
     if max_num_annots > 0:
@@ -283,7 +291,7 @@ def collater(data):
     else:
         annot_padded = torch.ones((len(annots), 1, 7)) * -1
 
-    return (util.misc.nested_tensor_from_tensor_list(np.array(imgs).permute(0, 3, 1, 2)),
+    return (util.misc.nested_tensor_from_tensor_list(chw_imgs),
             [{'verbs': vi,
               'roles': vri,
               'boxes': util.box_ops.box_xyxy_to_cxcywh(annot[:, :4]) / torch.tensor([w, h, w, h], dtype=torch.float32), 
