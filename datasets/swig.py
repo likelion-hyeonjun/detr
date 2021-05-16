@@ -283,7 +283,7 @@ def collater(data):
     else:
         annot_padded = torch.ones((len(annots), 1, 7)) * -1
 
-    return (util.misc.nested_tensor_from_tensor_list(imgs.permute(0, 3, 1, 2)),
+    return (util.misc.nested_tensor_from_tensor_list(np.array(imgs).permute(0, 3, 1, 2)),
             [{'verbs': vi,
               'roles': vri,
               'boxes': util.box_ops.box_xyxy_to_cxcywh(annot[:, :4]) / torch.tensor([w, h, w, h], dtype=torch.float32), 
