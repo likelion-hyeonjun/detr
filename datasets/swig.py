@@ -277,7 +277,7 @@ def collater(data):
 
     chw_imgs = []
     for img in imgs:
-        chw_imgs.append(torch.tensor(img).permute(2, 0, 1))
+        chw_imgs.append(img.permute(2, 0, 1))
     max_num_annots = max(annot.shape[0] for annot in annots)
 
     if max_num_annots > 0:
