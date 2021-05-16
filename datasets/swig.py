@@ -259,10 +259,7 @@ class CSVDataset(Dataset):
 def collater(data):
     imgs = [s['img'] for s in data]
     annots = [s['annot'] for s in data]
-    shift_0 = [s['shift_0'] for s in data]
-    shift_1 = [s['shift_1'] for s in data]
 
-    scales = [s['scale'] for s in data]
     img_names = [s['img_name'] for s in data]
     verb_indices = [s['verb_idx'] for s in data]
     verb_indices = torch.tensor(verb_indices)
@@ -271,17 +268,6 @@ def collater(data):
 
     widths = [int(s.shape[0]) for s in imgs]
     heights = [int(s.shape[1]) for s in imgs]
-
-    batch_size = len(imgs)
-    max_width = 704
-    max_height = 704
-
-    padded_imgs = torch.zeros(batch_size, max_width, max_height, 3)
-
-    for i in range(batch_size):
-        img = imgs[i]
-        padded_imgs[i, shift_0[i]:shift_0[i]+img.shape[0], shift_1[i]:shift_1[i]+img.shape[1], :] = img
-
 
     max_num_annots = max(annot.shape[0] for annot in annots)
 
@@ -297,9 +283,7 @@ def collater(data):
     else:
         annot_padded = torch.ones((len(annots), 1, 7)) * -1
 
-    padded_imgs = padded_imgs.permute(0, 3, 1, 2)
-
-    return (util.misc.nested_tensor_from_tensor_list(padded_imgs),
+    return (util.misc.nested_tensor_from_tensor_list(imgs.permute(0, 3, 1, 2)),
             [{'verbs': vi,
               'roles': vri,
               'boxes': util.box_ops.box_xyxy_to_cxcywh(annot[:, :4]) / torch.tensor([w, h, w, h], dtype=torch.float32), 
