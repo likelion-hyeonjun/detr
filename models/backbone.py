@@ -57,15 +57,26 @@ class FrozenBatchNorm2d(torch.nn.Module):
 
 class BackboneBase(nn.Module):
 
-    def __init__(self, backbone: nn.Module, train_backbone: bool, num_channels: int, return_interm_layers: bool):
+    def __init__(self, backbone: nn.Module, train_backbone: bool, name_backbone: str, num_channels: int, return_interm_layers: bool):
         super().__init__()
-        for name, parameter in backbone.named_parameters():
-            if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
-                parameter.requires_grad_(False)
-        if return_interm_layers:
-            return_layers = {"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
+        if 'resnet' in name_backbone:
+            for name, parameter in backbone.named_parameters():
+                if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
+                    parameter.requires_grad_(False)
+            if return_interm_layers:
+                return_layers = {"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
+            else:
+                return_layers = {'layer4': "0"}
+        elif 'vgg16' == name_backbone:
+            for name, parameter in backbone.named_parameters():
+                if not train_backbone or 'features.0' not in name and 'features.2' not in name:
+                    parameter.requires_grad_(False)
+            if return_interm_layers:
+                assert False, "backbone {name_backbone} is not supported return intermediate layers"
+            return_layers = {"features": "0"}
         else:
-            return_layers = {'layer4': "0"}
+            # TODO only vgg16 is supported
+            assert False, f"backbone {name_backbone} is not supported now"
         self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
         self.num_channels = num_channels
 
@@ -86,11 +97,19 @@ class Backbone(BackboneBase):
                  train_backbone: bool,
                  return_interm_layers: bool,
                  dilation: bool):
-        backbone = getattr(torchvision.models, name)(
-            replace_stride_with_dilation=[False, False, dilation],
-            pretrained=is_main_process(), norm_layer=FrozenBatchNorm2d)
-        num_channels = 512 if name in ('resnet18', 'resnet34') else 2048
-        super().__init__(backbone, train_backbone, num_channels, return_interm_layers)
+        if 'resnet' in name:
+            backbone = getattr(torchvision.models, name)(
+                replace_stride_with_dilation=[False, False, dilation],
+                pretrained=is_main_process(), norm_layer=FrozenBatchNorm2d)
+            num_channels = 512 if name in ('resnet18', 'resnet34') else 2048
+        elif 'vgg16' == name:
+            backbone = getattr(torchvision.models, name)(
+                pretrained=is_main_process())
+            num_channels = 512
+        else:
+            # TODO only vgg16 is supported
+            assert False, f"backbone {name} is not supported now"
+        super().__init__(backbone, train_backbone, name, num_channels, return_interm_layers)
 
 
 class Joiner(nn.Sequential):
