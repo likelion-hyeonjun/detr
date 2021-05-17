@@ -82,6 +82,8 @@ def get_args_parser():
     parser.add_argument('--giou_loss_coef', default=2, type=float)
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
+    parser.add_argument('--loss_ratio', default = 1, type=float,
+                        help="Relative loss ratio between noun-loss and verb-loss")
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='imsitu')
@@ -134,7 +136,7 @@ def main(args):
 
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)

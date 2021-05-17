@@ -52,11 +52,12 @@ class Transformer(nn.Module):
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
         mask = mask.flatten(1)
         tgt = torch.zeros_like(query_embed)
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)   
+        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)  
+        
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed)
         if not use_decoder:
-            return hs.transpose(1, 2), nn.AdaptiveAvgPool2d((1,1))(memory.permute(1, 2, 0).view(bs, c, h, w)).squeeze(2).squeeze(2)
+            return hs.transpose(1, 2), nn.AdaptiveAvgPool2d((1,1))(memory.permute(1, 2, 0).view(bs, c, h, w)).squeeze(2).squeeze(2) 
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
 
 class TransformerEncoder(nn.Module):
