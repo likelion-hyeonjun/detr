@@ -21,7 +21,7 @@ from .transformer import build_transformer
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
 
-    def __init__(self, backbone, transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, aux_loss=False):
+    def __init__(self, backbone, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, aux_loss=False, use_verb_decoder = False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -36,8 +36,9 @@ class DETR(nn.Module):
         self.num_verb_embed = num_verb_embed
         self.num_role_queries = num_role_queries
         self.gt_role_queries = gt_role_queries
-        self.transformer = transformer
-        hidden_dim = transformer.d_model
+        self.role_transformer = role_transformer
+        self.verb_transformer = verb_transformer
+        hidden_dim = role_transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         if num_verb_embed == 0:
@@ -45,9 +46,12 @@ class DETR(nn.Module):
         else:
             self.verb_embed = nn.Embedding(num_verb_embed, hidden_dim // 2)
             self.role_embed = nn.Embedding(num_role_queries, hidden_dim // 2)
+        self.verb_query_for_verb_decoder = nn.Embedding(1, hidden_dim)
+        self.verb_classifier = nn.Linear(hidden_dim, 504) 
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
+        self.use_verb_decoder = use_verb_decoder
 
     def forward(self, samples: NestedTensor, targets):
         """ The forward expects a NestedTensor, which consists of:
@@ -74,6 +78,7 @@ class DETR(nn.Module):
         src, mask = features[-1].decompose()
         assert mask is not None
         batch_hs = []
+        batch_verb_hs = []
         for i in range(src.shape[0]):  # batchsize
             if not self.gt_role_queries:
                 selected_role_query_embed = self.role_embed.weight
@@ -90,18 +95,25 @@ class DETR(nn.Module):
                 selected_query_embed = torch.cat([
                     selected_role_query_embed, selected_verb_query_embed], axis=1)
             # sliced_hs : num_layer x 1 x num or selected role_queries x hidden_dim
-            sliced_hs = self.transformer(
+            sliced_hs= self.role_transformer(
                 self.input_proj(src[i:i + 1]), mask[i:i + 1], selected_query_embed, pos[-1][i:i + 1])[0]
+            sliced_verb_hs, sliced_verb_memory = self.verb_transformer(
+                self.input_proj(src[i:i + 1]), mask[i:i + 1], self.verb_query_for_verb_decoder.weight, pos[-1][i:i + 1], self.use_verb_decoder)
             if not self.gt_role_queries:
                 padded_hs = sliced_hs
             else:
                 padded_hs = F.pad(sliced_hs, (0, 0, 0, 6 - len(selected_query_embed)), mode='constant', value=0)
             batch_hs.append(padded_hs)
+            batch_verb_hs.append(sliced_verb_hs) if self.use_verb_decoder else batch_verb_hs.append(sliced_verb_memory)
         hs = torch.cat(batch_hs, dim=1)
+        verb_hs = torch.cat(batch_verb_hs, dim=1) if self.use_verb_decoder else torch.cat(batch_verb_hs, dim=0)
 
         outputs_class = self.class_embed(hs)
+        outputs_verb = self.verb_classifier(verb_hs)
+        if self.use_verb_decoder:
+            outputs_verb = outputs_verb[-1]
         outputs_coord = self.bbox_embed(hs).sigmoid()
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'pred_verb': outputs_verb}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         return out
@@ -327,6 +339,7 @@ class SWiGCriterion(nn.Module):
         self.gt_role_queries = gt_role_queries
         self.weight_dict = weight_dict
         self.loss_function = LabelSmoothing(0.2)
+        self.loss_function_for_verb = LabelSmoothing(0.2)
 
     def forward(self, outputs, targets):
         """ This performs the loss computation.
@@ -338,6 +351,8 @@ class SWiGCriterion(nn.Module):
         assert 'pred_logits' in outputs
         batch_noun_loss = []
         batch_noun_acc = []
+        verb_pred_logits = outputs['pred_verb'].squeeze(dim=1)
+
         for b, (p, t) in enumerate(zip(outputs['pred_logits'], targets)):
             roles = t['roles']
             num_roles = len(roles)
@@ -352,8 +367,11 @@ class SWiGCriterion(nn.Module):
         noun_loss = torch.stack(batch_noun_loss).mean()
         noun_acc = torch.stack(batch_noun_acc).mean()
 
-        return {'loss_ce': noun_loss, 'noun_acc': noun_acc, 'class_error': torch.tensor(0.).cuda(), 'loss_bbox': outputs['pred_boxes'].sum() * 0}
+        gt_verbs = torch.stack([t['verbs'] for t in targets])
+        verb_loss = self.loss_function_for_verb(verb_pred_logits, gt_verbs)
+        verb_acc = accuracy(verb_pred_logits, gt_verbs)[0]
 
+        return {'loss_vce': verb_loss, 'loss_nce': noun_loss, 'verb_error': verb_acc, 'noun_error': noun_acc, 'class_error': torch.tensor(0).cuda(), 'loss_bbox': outputs['pred_boxes'].sum() * 0}
 
 class PostProcess(nn.Module):
     """ This module converts the model's output into the format expected by the coco api"""
@@ -422,16 +440,19 @@ def build(args):
 
     backbone = build_backbone(args)
 
-    transformer = build_transformer(args)
+    role_transformer = build_transformer(args)
+    verb_transformer = build_transformer(args)
 
     model = DETR(
         backbone,
-        transformer,
+        role_transformer,
+        verb_transformer,
         num_classes=num_classes,
         num_verb_embed=args.num_verb_embed,
         num_role_queries=args.num_role_queries,
         gt_role_queries=args.gt_role_queries,
         aux_loss=args.aux_loss,
+        use_verb_decoder = args.use_verb_decoder
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
