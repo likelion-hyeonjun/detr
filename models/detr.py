@@ -36,7 +36,7 @@ class DETR(nn.Module):
         self.transformer = transformer
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.bbox_embed = None
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
@@ -66,10 +66,7 @@ class DETR(nn.Module):
         hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
 
         outputs_class = self.class_embed(hs)
-        outputs_coord = self.bbox_embed(hs).sigmoid()
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
-        if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+        out = {'pred_logits': outputs_class[-1]}
         return out
 
     @torch.jit.unused
@@ -301,20 +298,28 @@ class SWiGCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         assert 'pred_logits' in outputs
+        pred_logits = outputs['pred_logits']
+        device = pred_logits.device
+
         batch_noun_loss = []
         batch_noun_acc = []
-        for b, t in enumerate(targets):
+        for p, t in zip(pred_logits, targets):
+            roles = t['roles']
+            num_roles = len(roles)
+            role_targ = t['labels'][:num_roles]
+            role_targ = role_targ.long()
+            role_pred = p[roles]
+            batch_noun_acc += accuracy_swig(role_pred, role_targ)
+
             role_noun_loss = []
             for n in range(3):
-                role_noun_loss.append(self.loss_function(
-                    outputs['pred_logits'][b, t['roles']], t['labels'][:len(t['roles']), n].long().cuda()))
+                role_noun_loss.append(self.loss_function(role_pred, role_targ[:, n]))
             batch_noun_loss.append(sum(role_noun_loss))
-            batch_noun_acc += accuracy_swig(outputs['pred_logits'][b, t['roles']],
-                                            t['labels'][:len(t['roles'])].long().cuda())
         noun_loss = torch.stack(batch_noun_loss).mean()
-        noun_acc = torch.stack(batch_noun_acc).mean()
+        noun_acc = torch.stack(batch_noun_acc)
 
-        return {'loss_ce': noun_loss, 'noun_acc': noun_acc, 'class_error': torch.tensor(0).cuda(), 'loss_bbox': outputs['pred_boxes'].sum() * 0}
+        return {'loss_ce': noun_loss, 'noun_acc': noun_acc.mean(),
+                'class_error': torch.tensor(0.).to(device)}
 
 
 class PostProcess(nn.Module):
@@ -379,7 +384,6 @@ def build(args):
         num_classes = 250
     elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
         num_classes = args.num_classes
-        args.decoder_attn_mask = args.role_adj_mat
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
