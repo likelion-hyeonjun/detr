@@ -1,8 +1,11 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# TODO Modify Copyright
 import torch.utils.data
 import torchvision
 
 from .coco import build as build_coco
+from .swig import build as build_swig
+from .imsitu import build as build_imsitu
 
 
 def get_coco_api_from_dataset(dataset):
@@ -22,4 +25,8 @@ def build_dataset(image_set, args):
         # to avoid making panopticapi required for coco
         from .coco_panoptic import build as build_coco_panoptic
         return build_coco_panoptic(image_set, args)
+    if args.dataset_file == 'swig':
+        return build_swig(image_set, args)
+    if args.dataset_file == 'imsitu':
+        return build_imsitu(image_set, args)
     raise ValueError(f'dataset {args.dataset_file} not supported')

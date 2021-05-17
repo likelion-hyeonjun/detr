@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
-from engine import evaluate, train_one_epoch
+from engine import evaluate, train_one_epoch, evaluate_swig
 from models import build_model
 
 
@@ -52,8 +52,13 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=100, type=int,
-                        help="Number of query slots")
+    parser.add_argument('--num_verb_embed', type=int, choices=[504, 1, 0],
+                        help="Number of verb embed to cat role query slots")
+    parser.add_argument('--num_role_queries', type=int, choices=[190],
+                        help="Number of role query slots")
+    parser.add_argument('--gt_role_queries', action="store_true",
+                        help="Select gt role queries")
+    parser.add_argument('--use_verb_decoder', action="store_true")
     parser.add_argument('--pre_norm', action='store_true')
 
     # * Segmentation
@@ -77,11 +82,15 @@ def get_args_parser():
     parser.add_argument('--giou_loss_coef', default=2, type=float)
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
+    parser.add_argument('--loss_ratio', default = 1, type=float,
+                        help="Relative loss ratio between noun-loss and verb-loss")
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default='coco')
+    parser.add_argument('--dataset_file', default='imsitu')
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
+    parser.add_argument('--imsitu_path', type=str, default="imSitu")
+    parser.add_argument('--swig_path', type=str, default="SWiG")
     parser.add_argument('--remove_difficult', action='store_true')
 
     parser.add_argument('--output_dir', default='',
@@ -93,7 +102,7 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
-    parser.add_argument('--num_workers', default=2, type=int)
+    parser.add_argument('--num_workers', default=0, type=int)
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -118,12 +127,16 @@ def main(args):
     np.random.seed(seed)
     random.seed(seed)
 
+    dataset_train = build_dataset(image_set='train', args=args)
+    dataset_val = build_dataset(image_set='val', args=args)
+    if args.dataset_file == "swig" or args.dataset_file == "imsitu":
+        args.num_classes = dataset_train.num_nouns()
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
@@ -139,9 +152,6 @@ def main(args):
                                   weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
-    dataset_train = build_dataset(image_set='train', args=args)
-    dataset_val = build_dataset(image_set='val', args=args)
-
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
@@ -149,19 +159,39 @@ def main(args):
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
-    batch_sampler_train = torch.utils.data.BatchSampler(
-        sampler_train, args.batch_size, drop_last=True)
+    if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+        batch_sampler_train = torch.utils.data.BatchSampler(
+            sampler_train, args.batch_size, drop_last=True)
 
-    data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                   collate_fn=utils.collate_fn, num_workers=args.num_workers)
-    data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
-                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+        data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
+                                       collate_fn=utils.collate_fn, num_workers=args.num_workers)
+        data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
+                                     drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+    elif args.dataset_file == "swig":
+        from datasets.swig import AspectRatioBasedSampler, collater
+        # time too long
+        # batch_sampler_train = AspectRatioBasedSampler(dataset_train, batch_size=args.batch_size, drop_last=True)
+        # data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers, collate_fn=collater, batch_sampler=batch_sampler_train)
+        # batch_sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=args.batch_size, drop_last=True)  # TODO check drop_last
+        # data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers, drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
+        batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
+        data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
+                                       collate_fn=collater, batch_sampler=batch_sampler_train)
+        data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers,
+                                     drop_last=False, collate_fn=collater, sampler=sampler_val)
+    elif args.dataset_file == "imsitu":
+        from datasets.imsitu import collater
+        batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
+        data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
+                                       collate_fn=collater, batch_sampler=batch_sampler_train)
+        data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers,
+                                     drop_last=False, collate_fn=collater, sampler=sampler_val)
 
     if args.dataset_file == "coco_panoptic":
         # We also evaluate AP during panoptic training, on original coco DS
         coco_val = datasets.coco.build("val", args)
         base_ds = get_coco_api_from_dataset(coco_val)
-    else:
+    elif args.dataset_file == 'coco':
         base_ds = get_coco_api_from_dataset(dataset_val)
 
     if args.frozen_weights is not None:
@@ -182,12 +212,19 @@ def main(args):
             args.start_epoch = checkpoint['epoch'] + 1
 
     if args.eval:
-        test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
-                                              data_loader_val, base_ds, device, args.output_dir)
+        if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+            test_stats, evaluator = evaluate(model, criterion, postprocessors,
+                                             data_loader_val, base_ds, device, args.output_dir)
+        elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
+            test_stats = evaluate_swig(model, criterion, postprocessors,
+                                       data_loader_val, device, args.output_dir)
         if args.output_dir:
-            utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+            if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+                utils.save_on_master(evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
+    min_test_loss = np.inf
+    max_test_acc_noun = -np.inf
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
@@ -197,10 +234,25 @@ def main(args):
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm)
         lr_scheduler.step()
+
+        if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+            test_stats, evaluator = evaluate(model, criterion, postprocessors,
+                                             data_loader_val, base_ds, device, args.output_dir)
+        elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
+            test_stats = evaluate_swig(model, criterion, postprocessors,
+                                       data_loader_val, device, args.output_dir)
+
+        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                     **{f'test_{k}': v for k, v in test_stats.items()},
+                     'epoch': epoch,
+                     'n_parameters': n_parameters}
+
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
-            # extra checkpoint before LR drop and every 100 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 100 == 0:
+            # extra checkpoint for every new min loss or new max acc
+            if log_stats['test_loss'] < min_test_loss or log_stats['test_noun_acc_unscaled'] > max_test_acc_noun:
+                min_test_loss = log_stats['test_loss'] if log_stats['test_loss'] < min_test_loss else min_test_loss
+                max_test_acc_noun = log_stats['test_loss'] if log_stats['test_noun_acc_unscaled'] > max_test_acc_noun else max_test_acc_noun
                 checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
@@ -211,29 +263,21 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
-        test_stats, coco_evaluator = evaluate(
-            model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
-        )
-
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     **{f'test_{k}': v for k, v in test_stats.items()},
-                     'epoch': epoch,
-                     'n_parameters': n_parameters}
-
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
             # for evaluation logs
-            if coco_evaluator is not None:
-                (output_dir / 'eval').mkdir(exist_ok=True)
-                if "bbox" in coco_evaluator.coco_eval:
-                    filenames = ['latest.pth']
-                    if epoch % 50 == 0:
-                        filenames.append(f'{epoch:03}.pth')
-                    for name in filenames:
-                        torch.save(coco_evaluator.coco_eval["bbox"].eval,
-                                   output_dir / "eval" / name)
+            # if evaluator is not None:
+            #     (output_dir / 'eval').mkdir(exist_ok=True)
+            #     if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
+            #         if "bbox" in evaluator.coco_eval:
+            #             filenames = ['latest.pth']
+            #         if epoch % 50 == 0:
+            #             filenames.append(f'{epoch:03}.pth')
+            #         for name in filenames:
+            #                 torch.save(evaluator.coco_eval["bbox"].eval,
+            #                         output_dir / "eval" / name)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
