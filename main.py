@@ -52,8 +52,13 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=100, type=int,
-                        help="Number of query slots")
+    parser.add_argument('--num_verb_embed', type=int, choices=[504, 1, 0],
+                        help="Number of verb embed to cat role query slots")
+    parser.add_argument('--num_role_queries', type=int, choices=[190],
+                        help="Number of role query slots")
+    parser.add_argument('--gt_role_queries', action="store_true",
+                        help="Select gt role queries")
+    parser.add_argument('--use_verb_decoder', action="store_true")
     parser.add_argument('--pre_norm', action='store_true')
 
     # * Segmentation
@@ -77,6 +82,8 @@ def get_args_parser():
     parser.add_argument('--giou_loss_coef', default=2, type=float)
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
+    parser.add_argument('--loss_ratio', default = 1, type=float,
+                        help="Relative loss ratio between noun-loss and verb-loss")
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='imsitu')
@@ -129,7 +136,7 @@ def main(args):
 
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
@@ -218,6 +225,7 @@ def main(args):
 
     min_test_loss = np.inf
     max_test_acc_noun = -np.inf
+    max_test_acc_verb = -np.inf
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
@@ -243,9 +251,10 @@ def main(args):
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint for every new min loss or new max acc
-            if log_stats['test_loss'] < min_test_loss or log_stats['test_noun_acc_unscaled'] > max_test_acc_noun:
+            if log_stats['test_loss'] < min_test_loss or log_stats['test_noun_acc_unscaled'] > max_test_acc_noun or log_stats['test_verb_acc_unscaled'] > max_test_acc_verb:
                 min_test_loss = log_stats['test_loss'] if log_stats['test_loss'] < min_test_loss else min_test_loss
                 max_test_acc_noun = log_stats['test_noun_acc_unscaled'] if log_stats['test_noun_acc_unscaled'] > max_test_acc_noun else max_test_acc_noun
+                max_test_acc_verb = log_stats['test_verb_acc_unscaled'] if log_stats['test_verb_acc_unscaled'] > max_test_acc_verb else max_test_acc_verb
                 checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
