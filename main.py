@@ -245,7 +245,7 @@ def main(args):
             # extra checkpoint for every new min loss or new max acc
             if log_stats['test_loss'] < min_test_loss or log_stats['test_noun_acc_unscaled'] > max_test_acc_noun:
                 min_test_loss = log_stats['test_loss'] if log_stats['test_loss'] < min_test_loss else min_test_loss
-                max_test_acc_noun = log_stats['test_loss'] if log_stats['test_noun_acc_unscaled'] > max_test_acc_noun else max_test_acc_noun
+                max_test_acc_noun = log_stats['test_noun_acc_unscaled'] if log_stats['test_noun_acc_unscaled'] > max_test_acc_noun else max_test_acc_noun
                 checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
