@@ -298,6 +298,8 @@ def build(image_set, args):
         "train": transforms.Compose([
             transforms.Scale(224),
             transforms.RandomCrop(224),
+            transforms.ColorJitter(brightness=0.2, contrast=0., saturation=0.2, hue=0.2),
+            transforms.RandomGrayscale(p=0.3),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalizer,
