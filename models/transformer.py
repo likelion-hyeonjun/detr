@@ -44,7 +44,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed, use_decoder = True):
+    def forward(self, src, mask, query_embed, pos_embed):
         # flatten NxCxHxW to HWxNxC
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(2, 0, 1)
@@ -56,8 +56,7 @@ class Transformer(nn.Module):
         
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed)
-        if not use_decoder:
-            return hs.transpose(1, 2), nn.AdaptiveAvgPool2d((1,1))(memory.permute(1, 2, 0).view(bs, c, h, w)).squeeze(2).squeeze(2) 
+        
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
 
 class TransformerEncoder(nn.Module):

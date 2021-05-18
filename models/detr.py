@@ -21,7 +21,7 @@ from .transformer import build_transformer
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
 
-    def __init__(self, backbone, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, aux_loss=False, use_verb_decoder = False):
+    def __init__(self, backbone, transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -36,9 +36,8 @@ class DETR(nn.Module):
         self.num_verb_embed = num_verb_embed
         self.num_role_queries = num_role_queries
         self.gt_role_queries = gt_role_queries
-        self.role_transformer = role_transformer
-        self.verb_transformer = verb_transformer
-        hidden_dim = role_transformer.d_model
+        self.role_transformer = transformer
+        hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         if num_verb_embed == 0:
@@ -46,12 +45,19 @@ class DETR(nn.Module):
         else:
             self.verb_embed = nn.Embedding(num_verb_embed, hidden_dim // 2)
             self.role_embed = nn.Embedding(num_role_queries, hidden_dim // 2)
-        self.verb_query_for_verb_decoder = nn.Embedding(1, hidden_dim)
-        self.verb_classifier = nn.Linear(hidden_dim, 504) 
+        
+        self.verb_classifier =  nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, 504),
+        )
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
-        self.use_verb_decoder = use_verb_decoder
 
     def forward(self, samples: NestedTensor, targets):
         """ The forward expects a NestedTensor, which consists of:
@@ -74,11 +80,12 @@ class DETR(nn.Module):
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
         features, pos = self.backbone(samples)
+       
 
         src, mask = features[-1].decompose()
+        verb_feat = src.flatten(1)
         assert mask is not None
         batch_hs = []
-        batch_verb_hs = []
         for i in range(src.shape[0]):  # batchsize
             if not self.gt_role_queries:
                 selected_role_query_embed = self.role_embed.weight
@@ -97,21 +104,17 @@ class DETR(nn.Module):
             # sliced_hs : num_layer x 1 x num or selected role_queries x hidden_dim
             sliced_hs= self.role_transformer(
                 self.input_proj(src[i:i + 1]), mask[i:i + 1], selected_query_embed, pos[-1][i:i + 1])[0]
-            sliced_verb_hs, sliced_verb_memory = self.verb_transformer(
-                self.input_proj(src[i:i + 1]), mask[i:i + 1], self.verb_query_for_verb_decoder.weight, pos[-1][i:i + 1], self.use_verb_decoder)
             if not self.gt_role_queries:
                 padded_hs = sliced_hs
             else:
                 padded_hs = F.pad(sliced_hs, (0, 0, 0, 6 - len(selected_query_embed)), mode='constant', value=0)
             batch_hs.append(padded_hs)
-            batch_verb_hs.append(sliced_verb_hs) if self.use_verb_decoder else batch_verb_hs.append(sliced_verb_memory)
+            
         hs = torch.cat(batch_hs, dim=1)
-        verb_hs = torch.cat(batch_verb_hs, dim=1) if self.use_verb_decoder else torch.cat(batch_verb_hs, dim=0)
+        
 
         outputs_class = self.class_embed(hs)
-        outputs_verb = self.verb_classifier(verb_hs)
-        if self.use_verb_decoder:
-            outputs_verb = outputs_verb[-1]
+        outputs_verb = self.verb_classifier(verb_feat)
         outputs_coord = self.bbox_embed(hs).sigmoid()
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'pred_verb': outputs_verb}
         if self.aux_loss:
@@ -440,19 +443,16 @@ def build(args):
 
     backbone = build_backbone(args)
 
-    role_transformer = build_transformer(args)
-    verb_transformer = build_transformer(args)
+    transformer = build_transformer(args)
 
     model = DETR(
         backbone,
-        role_transformer,
-        verb_transformer,
+        transformer,
         num_classes=num_classes,
         num_verb_embed=args.num_verb_embed,
         num_role_queries=args.num_role_queries,
         gt_role_queries=args.gt_role_queries,
         aux_loss=args.aux_loss,
-        use_verb_decoder = args.use_verb_decoder
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
