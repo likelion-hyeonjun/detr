@@ -22,7 +22,7 @@ from .transformer import build_transformer
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
 
-    def __init__(self, backbone_v, backbone_r, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, verb_role_tgt_mask, aux_loss=False, use_verb_decoder=False):
+    def __init__(self, backbone_v, backbone_r, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, verb_role_tgt_mask, use_verb_decoder, use_verb_fcn, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -49,17 +49,31 @@ class DETR(nn.Module):
         else:
             self.verb_embed = nn.Embedding(num_verb_embed, hidden_dim // 2)
             self.role_embed = nn.Embedding(num_role_queries, hidden_dim // 2)
-        self.verb_query_for_verb_decoder = nn.Embedding(1, hidden_dim)
-        self.verb_classifier = nn.Linear(hidden_dim, 504)
         self.input_proj_v = nn.Conv2d(backbone_v.num_channels, hidden_dim, kernel_size=1)
         self.input_proj_r = nn.Conv2d(backbone_r.num_channels, hidden_dim, kernel_size=1)
+        if not use_verb_fcn:
+            self.verb_query_for_verb_decoder = nn.Embedding(1, hidden_dim)
+            self.verb_classifier = nn.Linear(hidden_dim, 504)
+            if not use_verb_decoder:
+                self.avg_pool = AdaptiveAvgPool2d((1, 1))
+        else:
+            self.avg_pool = AdaptiveAvgPool2d((7, 7))
+            self.verb_classifier = nn.Sequential(
+                nn.Flatten(-3),
+                nn.Linear(hidden_dim * 7 * 7, 4096),
+                nn.ReLU(True),
+                nn.Dropout(),
+                nn.Linear(4096, 4096),
+                nn.ReLU(True),
+                nn.Dropout(),
+                nn.Linear(4096, 504),
+            )
 
         self.backbone_v = backbone_v
         self.backbone_r = backbone_r
         self.aux_loss = aux_loss
         self.use_verb_decoder = use_verb_decoder
-        if not use_verb_decoder:
-            self.avg_pool = AdaptiveAvgPool2d((1, 1))
+        self.use_verb_fcn = use_verb_fcn
 
     def forward(self, samples: NestedTensor, targets):
         """ The forward expects a NestedTensor, which consists of:
@@ -132,11 +146,15 @@ class DETR(nn.Module):
 
         hs = self.role_transformer(
             self.input_proj_r(src_r), mask_r, query_embed, pos_r[-1], decoder_tgt_mask, decoder_memory_mask)[0]
-        verb_hs, verb_memory = self.verb_transformer(
-            self.input_proj_v(src_v), mask_v, self.verb_query_for_verb_decoder.weight, pos_v[-1], None, None)
+        if self.use_verb_fcn:
+            verb_hs = self.input_proj_v(src_v)
+            verb_hs = self.avg_pool(verb_hs)[None, :, None]
+        else:
+            verb_hs, verb_memory = self.verb_transformer(
+                self.input_proj_v(src_v), mask_v, self.verb_query_for_verb_decoder.weight, pos_v[-1], None, None)
 
-        if not self.use_verb_decoder:
-            verb_hs = self.avg_pool(verb_memory)[None, :, None, :, 0, 0]
+            if not self.use_verb_decoder:
+                verb_hs = self.avg_pool(verb_memory)[None, :, None, :, 0, 0]
 
         outputs_class = self.class_embed(hs)
         outputs_verb = self.verb_classifier(verb_hs)
@@ -515,8 +533,9 @@ def build(args):
         num_role_queries=args.num_role_queries,
         gt_role_queries=args.gt_role_queries,
         verb_role_tgt_mask=verb_role_tgt_mask,
+        use_verb_decoder=args.use_verb_decoder,
+        use_verb_fcn=args.use_verb_fcn,
         aux_loss=args.aux_loss,
-        use_verb_decoder=args.use_verb_decoder
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
