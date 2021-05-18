@@ -394,10 +394,33 @@ class SWiGCriterion(nn.Module):
         verb_pred_logits = outputs['pred_verb'].squeeze(dim=1)
         gt_verbs = torch.stack([t['verbs'] for t in targets])
         verb_loss = self.loss_function_for_verb(verb_pred_logits, gt_verbs)
-        verb_acc = accuracy(verb_pred_logits, gt_verbs)[0]
+        verb_acc = accuracy(verb_pred_logits, gt_verbs, topk=(1, 5))
 
-        return {'loss_vce': verb_loss, 'loss_nce': noun_loss, 'verb_acc': verb_acc, 'noun_acc': noun_acc.mean(),
-                'class_error': torch.tensor(0).to(device)}
+        batch_noun_acc_topk = []
+        for verbs in verb_pred_logits.topk(5)[1].transpose(0, 1):
+            batch_noun_acc = []
+            for v, p, t in zip(verbs, pred_logits, targets):
+                if v == t['verbs']:
+                    roles = t['roles']
+                    num_roles = len(roles)
+                    role_targ = t['labels'][:num_roles]
+                    role_targ = role_targ.long().cuda()
+                    role_pred = p[roles]
+                    batch_noun_acc += accuracy_swig(role_pred, role_targ)
+                else:
+                    batch_noun_acc += [torch.tensor(0., device=device)]
+            batch_noun_acc_topk.append(torch.stack(batch_noun_acc))
+        noun_acc_topk = torch.stack(batch_noun_acc_topk)
+
+        stat = {'loss_vce': verb_loss, 'loss_nce': noun_loss,
+                'noun_acc_top1': noun_acc_topk[0].mean(), 'noun_acc_all_top1': (noun_acc_topk[0] == 1).float().mean(),
+                'noun_acc_top5': noun_acc_topk.sum(0).mean(), 'noun_acc_all_top1': (noun_acc_topk.sum(0) == 1).float().mean(),
+                'verb_acc_top1': verb_acc[0], 'verb_acc_top5': verb_acc[1],
+                'noun_acc_gt': noun_acc.mean(), 'noun_acc_all_gt': (noun_acc == 1).float().mean(),
+                'class_error': torch.tensor(0.).to(device)}
+        stat.update({'mean_acc': torch.stack([v for k, v in stat.items() if 'acc' in k]).mean()})
+
+        return stat
 
 
 class PostProcess(nn.Module):
