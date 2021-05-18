@@ -22,7 +22,7 @@ from .transformer import build_transformer
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
 
-    def __init__(self, backbone, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, verb_role_tgt_mask, aux_loss=False, use_verb_decoder=False):
+    def __init__(self, backbone_v, backbone_r, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, verb_role_tgt_mask, aux_loss=False, use_verb_decoder=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -51,10 +51,11 @@ class DETR(nn.Module):
             self.role_embed = nn.Embedding(num_role_queries, hidden_dim // 2)
         self.verb_query_for_verb_decoder = nn.Embedding(1, hidden_dim)
         self.verb_classifier = nn.Linear(hidden_dim, 504)
-        self.input_proj_v = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
-        self.input_proj_r = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
+        self.input_proj_v = nn.Conv2d(backbone_v.num_channels, hidden_dim, kernel_size=1)
+        self.input_proj_r = nn.Conv2d(backbone_r.num_channels, hidden_dim, kernel_size=1)
 
-        self.backbone = backbone
+        self.backbone_v = backbone_v
+        self.backbone_r = backbone_r
         self.aux_loss = aux_loss
         self.use_verb_decoder = use_verb_decoder
         if not use_verb_decoder:
@@ -80,11 +81,14 @@ class DETR(nn.Module):
 
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
-        features, pos = self.backbone(samples)
+        features_v, pos_v = self.backbone_v(samples)
+        features_r, pos_r = self.backbone_r(samples)
 
-        src, mask = features[-1].decompose()
-        device = src.device
-        assert mask is not None
+        src_v, mask_v = features_v[-1].decompose()
+        src_r, mask_r = features_r[-1].decompose()
+        device = src_v.device
+        assert mask_v is not None
+        assert mask_r is not None
 
         if self.num_verb_embed == 0:
             query_embed = self.role_embed.weight
@@ -127,9 +131,9 @@ class DETR(nn.Module):
             decoder_memory_mask = None
 
         hs = self.role_transformer(
-            self.input_proj_r(src), mask, query_embed, pos[-1], decoder_tgt_mask, decoder_memory_mask)[0]
+            self.input_proj_r(src_r), mask_r, query_embed, pos_r[-1], decoder_tgt_mask, decoder_memory_mask)[0]
         verb_hs, verb_memory = self.verb_transformer(
-            self.input_proj_v(src), mask, self.verb_query_for_verb_decoder.weight, pos[-1], None, None)
+            self.input_proj_v(src_v), mask_v, self.verb_query_for_verb_decoder.weight, pos_v[-1], None, None)
 
         if not self.use_verb_decoder:
             verb_hs = self.avg_pool(verb_memory)[None, :, None, :, 0, 0]
@@ -495,13 +499,15 @@ def build(args):
 
     device = torch.device(args.device)
 
-    backbone = build_backbone(args)
+    backbone_v = build_backbone(args)
+    backbone_r = build_backbone(args)
 
     role_transformer = build_transformer(args)
     verb_transformer = build_transformer(args)
 
     model = DETR(
-        backbone,
+        backbone_v,
+        backbone_r,
         role_transformer,
         verb_transformer,
         num_classes=num_classes,
