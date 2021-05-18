@@ -78,11 +78,14 @@ class CSVDataset(Dataset):
         self.verb_role = {verb: value['order'] for verb, value in verb_info.items()}
         self.vidx_ridx = [[self.role_to_idx[role] for role in self.verb_role[verb]] for verb in self.idx_to_verb]
 
-        # role adjacency matrix
-        self.role_adj_matrix = np.ones((len(self.role_to_idx), len(self.role_to_idx))).astype(bool)
-        for ridx in self.vidx_ridx:
+        # verb role adjacency matrix
+        self.verb_role_adj_matrix = np.zeros((len(self.verb_to_idx), len(self.role_to_idx), len(self.role_to_idx))).astype(bool)
+        for vidx, ridx in enumerate(self.vidx_ridx):
             ridx = np.array(ridx)
-            self.role_adj_matrix[ridx[:, None], ridx] = np.zeros(len(ridx)).astype(bool)
+            self.verb_role_adj_matrix[vidx:vidx+1, ridx[:, None], ridx] = np.ones(len(ridx)).astype(bool)
+
+        # role adjacency matrix
+        self.role_adj_matrix = self.verb_role_adj_matrix.any(0)
 
     def load_classes(self, csv_reader):
         result = {}
