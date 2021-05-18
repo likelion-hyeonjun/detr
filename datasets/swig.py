@@ -46,7 +46,9 @@ class CSVDataset(Dataset):
         self.is_visualizing = is_visualizing
         self.is_training = is_training
 
-        self.color_change = transforms.Compose([transforms.ColorJitter(hue=.05, saturation=.05, brightness=0.05), transforms.RandomGrayscale(p=0.3)])
+        self.color_change = transforms.Compose([
+            transforms.ColorJitter(hue=.05, saturation=.05, brightness=0.05),
+            transforms.RandomGrayscale(p=0.3)])
 
         with open(self.class_list, 'r') as file:
             self.classes, self.idx_to_class = self.load_classes(csv.reader(file, delimiter=','))
@@ -128,7 +130,6 @@ class CSVDataset(Dataset):
     def make_dummy_annot(self):
         annotations = np.zeros((0, 7))
 
-
         # parse annotations
         for idx in range(6):
             annotation = np.zeros((1, 7))  # allow for 3 annotations
@@ -137,11 +138,9 @@ class CSVDataset(Dataset):
 
         return annotations
 
-
     def __len__(self):
-        #return 16
+        # return 16
         return len(self.image_names)
-
 
     def __getitem__(self, idx):
 
@@ -160,7 +159,8 @@ class CSVDataset(Dataset):
 
         verb_idx = self.verb_to_idx[verb]
         verb_role_idx = self.vidx_ridx[verb_idx]
-        sample = {'img': img, 'annot': annot, 'img_name': self.image_names[idx], 'verb_idx': verb_idx, 'verb_role_idx': verb_role_idx}
+        sample = {'img': img, 'annot': annot, 'img_name': self.image_names[idx],
+                  'verb_idx': verb_idx, 'verb_role_idx': verb_role_idx}
         if self.transform:
             sample = self.transform(sample)
         return sample
@@ -174,7 +174,6 @@ class CSVDataset(Dataset):
             im = np.array(self.color_change(im))
         else:
             im = np.array(im)
-
 
         return im.astype(np.float32) / 255.0
 
@@ -202,7 +201,6 @@ class CSVDataset(Dataset):
             annotations = np.append(annotations, annotation, axis=0)
 
         return annotations
-
 
     def _read_annotations(self, json, verb_orders, classes):
         result = {}
@@ -243,7 +241,6 @@ class CSVDataset(Dataset):
                 result[img_file].append(
                     {'x1': x1, 'x2': x2, 'y1': y1, 'y2': y2, 'class1': class1, 'class2': class2, 'class3': class3})
         return result
-
 
     def name_to_label(self, name):
         return self.classes[name]
@@ -295,9 +292,9 @@ def collater(data):
     return (util.misc.nested_tensor_from_tensor_list(chw_imgs),
             [{'verbs': vi,
               'roles': vri,
-              'boxes': util.box_ops.box_xyxy_to_cxcywh(annot[:, :4]) / torch.tensor([w, h, w, h], dtype=torch.float32), 
+              'boxes': util.box_ops.box_xyxy_to_cxcywh(annot[:, :4]) / torch.tensor([w, h, w, h], dtype=torch.float32),
               'labels': annot[:, -3:]}
-              for vi, vri, annot, w, h in zip(verb_indices, verb_role_indices, annot_padded, widths, heights)])
+             for vi, vri, annot, w, h in zip(verb_indices, verb_role_indices, annot_padded, widths, heights)])
 
 
 class Resizer(object):
@@ -305,7 +302,6 @@ class Resizer(object):
 
     def __init__(self, is_for_training):
         self.is_for_training = is_for_training
-
 
     def __call__(self, sample, min_side=512, max_side=700):
         image, annots, image_name = sample['img'], sample['annot'], sample['img_name']
@@ -325,7 +321,7 @@ class Resizer(object):
 
         if self.is_for_training:
             scale_factor = random.choice([1, 0.75, 0.5])
-            scale = scale*scale_factor
+            scale = scale * scale_factor
 
         # resize the image with the computed scale
         image = skimage.transform.resize(image, (int(round(rows_orig * scale)), int(round((cols_orig * scale)))))
@@ -344,12 +340,12 @@ class Resizer(object):
         annots[:, 2][annots[:, 2] > 0] = annots[:, 2][annots[:, 2] > 0] + shift_1
         annots[:, 3][annots[:, 3] > 0] = annots[:, 3][annots[:, 3] > 0] + shift_0
 
-
         return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': scale, 'img_name': image_name, 'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx'], 'shift_1': shift_1, 'shift_0': shift_0}
 
 
 class Augmenter(object):
     """Convert ndarrays in sample to Tensors."""
+
     def __call__(self, sample, flip_x=0.5):
 
         image, annots, img_name = sample['img'], sample['annot'], sample['img_name']
@@ -366,9 +362,11 @@ class Augmenter(object):
             annots[:, 0][annots[:, 0] > 0] = cols - x2[annots[:, 0] > 0]
             annots[:, 2][annots[:, 2] > 0] = cols - x_tmp[annots[:, 2] > 0]
 
-            sample = {'img': image, 'annot': annots, 'img_name': img_name, 'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx']}
+            sample = {'img': image, 'annot': annots, 'img_name': img_name,
+                      'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx']}
 
-        sample = {'img': image, 'annot': annots, 'img_name': img_name, 'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx']}
+        sample = {'img': image, 'annot': annots, 'img_name': img_name,
+                  'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx']}
 
         return sample
 
@@ -383,7 +381,6 @@ class Normalizer(object):
         image, annots = sample['img'], sample['annot']
 
         return {'img': ((image.astype(np.float32) - self.mean) / self.std), 'annot': annots, 'img_name': sample['img_name'], 'verb_idx': sample['verb_idx'], 'verb_role_idx': sample['verb_role_idx']}
-
 
 
 class UnNormalizer(object):
@@ -466,7 +463,7 @@ def build(image_set, args):
         "test": transforms.Compose([Normalizer(), Resizer(False)]),
     }
     tfs = TRANSFORMS[image_set]
-    
+
     dataset = CSVDataset(img_folder=str(img_folder),
                          train_file=ann_file,
                          class_list=classes_file,
@@ -476,8 +473,4 @@ def build(image_set, args):
                          is_training=is_training,
                          transform=tfs)
 
-    # role adjancency matrix
-    args.role_adj_mat = dataset.role_adj_matrix
-    
     return dataset
-
