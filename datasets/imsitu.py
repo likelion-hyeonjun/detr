@@ -79,10 +79,10 @@ class CSVDataset(Dataset):
         self.vidx_ridx = [[self.role_to_idx[role] for role in self.verb_role[verb]] for verb in self.idx_to_verb]
 
         # verb role adjacency matrix
-        self.verb_role_adj_matrix = np.zeros((len(self.verb_to_idx), len(self.role_to_idx), len(self.role_to_idx))).astype(bool)
+        self.verb_role_adj_matrix = np.tile(np.identity(len(self.role_to_idx)), (len(self.verb_to_idx), 1, 1)).astype(bool)
         for vidx, ridx in enumerate(self.vidx_ridx):
             ridx = np.array(ridx)
-            self.verb_role_adj_matrix[vidx:vidx+1, ridx[:, None], ridx] = np.ones(len(ridx)).astype(bool)
+            self.verb_role_adj_matrix[vidx:vidx + 1, ridx[:, None], ridx] = np.ones(len(ridx)).astype(bool)
 
         # role adjacency matrix
         self.role_adj_matrix = self.verb_role_adj_matrix.any(0)
@@ -329,5 +329,7 @@ def build(image_set, args):
                          role_path=role_path,
                          verb_info=verb_orders,
                          transform=tfs)
+
+    args.vr_adj_mat = dataset.verb_role_adj_matrix
 
     return dataset

@@ -22,7 +22,7 @@ from .transformer import build_transformer
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
 
-    def __init__(self, backbone, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, aux_loss=False, use_verb_decoder=False):
+    def __init__(self, backbone, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, verb_role_tgt_mask, aux_loss=False, use_verb_decoder=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -37,9 +37,11 @@ class DETR(nn.Module):
         self.num_verb_embed = num_verb_embed
         self.num_role_queries = num_role_queries
         self.gt_role_queries = gt_role_queries
+        self.verb_role_tgt_mask = verb_role_tgt_mask
         self.role_transformer = role_transformer
         self.verb_transformer = verb_transformer
         hidden_dim = role_transformer.d_model
+        self.nhead = role_transformer.nhead
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         if num_verb_embed == 0:
@@ -81,46 +83,56 @@ class DETR(nn.Module):
         features, pos = self.backbone(samples)
 
         src, mask = features[-1].decompose()
+        device = src.device
         assert mask is not None
-        batch_hs = []
-        batch_verb_hs = []
-        for i in range(src.shape[0]):  # batchsize
-            if not self.gt_role_queries:
-                selected_role_query_embed = self.role_embed.weight
-            else:
-                selected_role_query_embed = self.role_embed.weight[targets[i]['roles']]
-            if self.num_verb_embed == 0:
-                selected_query_embed = selected_role_query_embed
-            else:
-                if self.num_verb_embed == 1:
-                    selected_verb_query_embed = self.verb_embed.weight[0]
-                elif self.num_verb_embed == 504:
-                    selected_verb_query_embed = self.verb_embed.weight[targets[i]['verbs']]
-                selected_verb_query_embed = selected_verb_query_embed.tile(selected_role_query_embed.shape[0], 1)
-                selected_query_embed = torch.cat([
-                    selected_role_query_embed, selected_verb_query_embed], axis=1)
-            # sliced_hs : num_layer x 1 x num or selected role_queries x hidden_dim
-            sliced_hs = self.role_transformer(
-                self.input_proj_r(src[i:i + 1]), mask[i:i + 1], selected_query_embed, pos[-1][i:i + 1])[0]
-            sliced_verb_hs, sliced_verb_memory = self.verb_transformer(
-                self.input_proj_v(src[i:i + 1]), mask[i:i + 1], self.verb_query_for_verb_decoder.weight, pos[-1][i:i + 1])
-            if not self.gt_role_queries:
-                padded_hs = sliced_hs
-            else:
-                padded_hs = F.pad(sliced_hs, (0, 0, 0, 6 - len(selected_query_embed)), mode='constant', value=0)
-            batch_hs.append(padded_hs)
 
-            if self.use_verb_decoder:
-                batch_verb_hs.append(sliced_verb_hs)  # num_layers, sliced_batch_size=1, num_verb_query, hidden_dim
-            else:
-                sliced_verb_feat = self.avg_pool(sliced_verb_memory)  # sliced_batch_size=1, hidden_dim, h=1, w=1
-                sliced_verb_feat_sq = sliced_verb_feat.squeeze(dim=2).squeeze(dim=2)  # sliced_batch_size=1, hidden_dim
-                # num_layers=1, sliced_batch_size=1, num_verb_query=1, hidden_dim
-                sliced_verb_feat_sq_usq = sliced_verb_feat_sq.unsqueeze(dim=1).unsqueeze(dim=0)
+        if self.num_verb_embed == 0:
+            query_embed = self.role_embed.weight
+            # 190 x 512
+        elif self.num_verb_embed == 1:
+            verb_embed = self.verb_embed.weight.tile(len(self.role_embed.weight), 1)
+            # 1 x 256  -> 190 x 256
+            query_embed = torch.cat([self.role_embed.weight, verb_embed], axis=-1)
+            # 190 x 256 cat 190 x 256 -> 190 x 512
+        elif self.num_verb_embed == 504:
+            # 504 x 256 -> batch_size x 256
+            verb_embed = torch.stack([self.verb_embed.weight[t['verbs']] for t in targets])
 
-                batch_verb_hs.append(sliced_verb_feat_sq_usq)
-        hs = torch.cat(batch_hs, dim=1)
-        verb_hs = torch.cat(batch_verb_hs, dim=1)
+            # 190 x batch_size x 256 cat 190 x batch_size x 256 -> 190 x batch_size x 512
+            query_embed = torch.cat([
+                # 190 x 256 -> 190 x batch_size x 256
+                self.role_embed.weight[:, None].tile(1, len(targets), 1),
+                # batch_size x 256 -> 190 x batch_size x 256
+                verb_embed[None].tile(len(self.role_embed.weight), 1, 1)], axis=-1)
+
+        if self.gt_role_queries:
+            # self.verb_role_tgt_mask: 504 x 190 x 190
+            # decoder_tgt_mask: batch_size x 190 x 190
+            decoder_tgt_mask = torch.stack([self.verb_role_tgt_mask[t['verbs']] for t in targets]).to(device)
+            # decoder_tgt_mask: batch_size*nhead x 190 x 190
+            # TODO: 190 to num_roles
+            decoder_tgt_mask = decoder_tgt_mask[:, None].tile(1, self.nhead, 1).contiguous().view(-1, 190, 190)
+
+            # decoder_memory_mask: batch_size x 190 x 1
+            decoder_memory_mask = torch.stack([
+                # 190 x 1
+                (~self.verb_role_tgt_mask[t['verbs']]).sum(dim=-1, keepdim=True) == 1
+                for t in targets]).to(device)
+            # decoder_memory_mask: batch_size x 190 x 1 -> batch_size*nhead x 190 x HW
+            # TODO: 190 to num_roles, 49 to src_len
+            decoder_memory_mask = decoder_memory_mask[:, None].tile(1, self.nhead, 1, 49).contiguous().view(-1, 190, 49)
+        else:
+            # self.verb_role_tgt_mask: 190 x 190 or None
+            decoder_tgt_mask = self.verb_role_tgt_mask
+            decoder_memory_mask = None
+
+        hs = self.role_transformer(
+            self.input_proj_r(src), mask, query_embed, pos[-1], decoder_tgt_mask, decoder_memory_mask)[0]
+        verb_hs, verb_memory = self.verb_transformer(
+            self.input_proj_v(src), mask, self.verb_query_for_verb_decoder.weight, pos[-1], None, None)
+
+        if not self.use_verb_decoder:
+            verb_hs = self.avg_pool(verb_memory)[None, :, None, :, 0, 0]
 
         outputs_class = self.class_embed(hs)
         outputs_verb = self.verb_classifier(verb_hs)
@@ -367,7 +379,7 @@ class SWiGCriterion(nn.Module):
         for p, t in zip(pred_logits, targets):
             roles = t['roles']
             num_roles = len(roles)
-            role_pred = p[:num_roles] if self.gt_role_queries else p[roles]
+            role_pred = p[roles]
             role_targ = t['labels'][:num_roles]
             role_targ = role_targ.long()
             batch_noun_acc += accuracy_swig(role_pred, role_targ)
@@ -450,6 +462,14 @@ def build(args):
         num_classes = 250
     elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
         num_classes = args.num_classes
+        if args.gt_role_queries:
+            verb_role_tgt_mask = torch.tensor(~args.vr_adj_mat)
+        else:
+            if args.use_role_adj_attn_mask:
+                verb_role_tgt_mask = torch.tensor(~args.vr_adj_mat.any(0))
+            else:
+                verb_role_tgt_mask = None
+
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -465,6 +485,7 @@ def build(args):
         num_verb_embed=args.num_verb_embed,
         num_role_queries=args.num_role_queries,
         gt_role_queries=args.gt_role_queries,
+        verb_role_tgt_mask=verb_role_tgt_mask,
         aux_loss=args.aux_loss,
         use_verb_decoder=args.use_verb_decoder
     )

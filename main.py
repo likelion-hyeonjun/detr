@@ -58,6 +58,8 @@ def get_args_parser():
                         help="Number of role query slots")
     parser.add_argument('--gt_role_queries', action="store_true",
                         help="Select gt role queries")
+    parser.add_argument('--use_role_adj_attn_mask', action="store_true",
+                        help="Use role adjacency matrix as attention mask")
     parser.add_argument('--use_verb_decoder', action="store_true")
     parser.add_argument('--pre_norm', action='store_true')
 
