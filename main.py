@@ -224,8 +224,7 @@ def main(args):
         return
 
     min_test_loss = np.inf
-    max_test_acc_noun = -np.inf
-    max_test_acc_verb = -np.inf
+    max_test_acc_mean = -np.inf
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
@@ -251,10 +250,9 @@ def main(args):
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint for every new min loss or new max acc
-            if log_stats['test_loss'] < min_test_loss or log_stats['test_noun_acc_unscaled'] > max_test_acc_noun or log_stats['test_verb_acc_unscaled'] > max_test_acc_verb:
+            if log_stats['test_loss'] < min_test_loss or log_stats['test_mean_acc_unscaled'] > max_test_acc_mean:
                 min_test_loss = log_stats['test_loss'] if log_stats['test_loss'] < min_test_loss else min_test_loss
-                max_test_acc_noun = log_stats['test_noun_acc_unscaled'] if log_stats['test_noun_acc_unscaled'] > max_test_acc_noun else max_test_acc_noun
-                max_test_acc_verb = log_stats['test_verb_acc_unscaled'] if log_stats['test_verb_acc_unscaled'] > max_test_acc_verb else max_test_acc_verb
+                max_test_acc_mean = log_stats['test_mean_acc_unscaled'] if log_stats['test_mean_acc_unscaled'] > max_test_acc_mean else max_test_acc_mean
                 checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
