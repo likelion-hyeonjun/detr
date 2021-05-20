@@ -163,7 +163,7 @@ class DETR(nn.Module):
             decoder_memory_mask = None
 
         if self.use_mixture_proj:
-            mixture_weight = self.mixture_proj(outputs_verb[-1])
+            mixture_weight = F.softmax(self.mixture_proj(outputs_verb[-1]), dim=-1)
             hs = self.role_transformer(
                 self.input_proj_r(src_r), mask_r, query_embed, pos_r[-1], decoder_tgt_mask, decoder_memory_mask, decoder_mixture_weight=mixture_weight)[0]
         else:
