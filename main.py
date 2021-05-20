@@ -65,7 +65,9 @@ def get_args_parser():
                         help="Use role adjacency matrix as attention mask")
     parser.add_argument('--use_verb_decoder', action="store_true")
     parser.add_argument('--use_verb_fcn', action="store_true")
-    parser.add_argument('--use_mixture_proj', action="store_true")
+    parser.add_argument('--num_mixture_proj', type=int, nargs=2,
+                        help="mixure projection matrix num, (self_attn, multihead_attn)."
+                            "1 for not using maxtrix proj")
     parser.add_argument('--pre_norm', action='store_true')
 
     # * Segmentation

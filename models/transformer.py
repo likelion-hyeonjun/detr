@@ -18,7 +18,7 @@ from torch.nn.modules.linear import _LinearWithBias
 
 class Transformer(nn.Module):
 
-    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
+    def __init__(self, d_model=512, nhead=8, nmixture=[8, 8], num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False,
                  return_intermediate_dec=False):
@@ -29,7 +29,7 @@ class Transformer(nn.Module):
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
 
-        decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
+        decoder_layer = TransformerDecoderLayer(d_model, nhead, nmixture, dim_feedforward,
                                                 dropout, activation, normalize_before)
         decoder_norm = nn.LayerNorm(d_model)
         self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
@@ -102,7 +102,7 @@ class TransformerDecoder(nn.Module):
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None,
-                mixture_weight: Optional[Tensor] = None,):
+                mixture_weight: List[Tensor] = [],):
         output = tgt
         intermediate = []
 
@@ -189,14 +189,17 @@ class TransformerEncoderLayer(nn.Module):
 
 class TransformerDecoderLayer(nn.Module):
 
-    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
+    def __init__(self, d_model, nhead, nmixture=[8, 8], dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
         super().__init__()
+        self.d_model = d_model
+        self.nhead = nhead
+        self.nmixture = nmixture
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.self_attn.out_proj = _LinearWithBias(d_model, d_model * 8)
+        self.self_attn.out_proj = _LinearWithBias(d_model, d_model * nmixture[0])
         self.self_attn._reset_parameters()
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, add_zero_attn=True)
-        self.multihead_attn.out_proj = _LinearWithBias(d_model, d_model * 8)
+        self.multihead_attn.out_proj = _LinearWithBias(d_model, d_model * nmixture[1])
         self.multihead_attn._reset_parameters()
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
@@ -222,22 +225,24 @@ class TransformerDecoderLayer(nn.Module):
                      memory_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None,
-                     mixture_weight: Optional[Tensor] = None):
+                     mixture_weight: List[Tensor] = []):
+        tgt_len = len(tgt)
         q = k = self.with_pos_embed(tgt, query_pos)
         tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
                               key_padding_mask=tgt_key_padding_mask)[0]
-        # tgt2: query_size x batch_size x hidden_dim*num_mixture
-        tgt2 = torch.bmm(tgt2.transpose(0, 1).reshape(-1, 190 * 256, 8),
-                         mixture_weight.reshape(-1, 8, 1)).reshape(-1, 190, 256).transpose(0, 1)
+        nm, mw = self.nmixture[0], mixture_weight[0]
+        tgt2 = torch.bmm(tgt2.transpose(0, 1).reshape(-1, tgt_len * self.d_model, nm),
+                         mw.reshape(-1, nm, 1)).reshape(-1, tgt_len, self.d_model).transpose(0, 1)
 
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
+        nm, mw = self.nmixture[1], mixture_weight[1]
         tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
                                    key_padding_mask=memory_key_padding_mask)[0]
-        tgt2 = torch.bmm(tgt2.transpose(0, 1).reshape(-1, 190 * 256, 8),
-                         mixture_weight.reshape(-1, 8, 1)).reshape(-1, 190, 256).transpose(0, 1)
+        tgt2 = torch.bmm(tgt2.transpose(0, 1).reshape(-1, tgt_len * self.d_model, nm),
+                         mw.reshape(-1, nm, 1)).reshape(-1, tgt_len, self.d_model).transpose(0, 1)
 
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
@@ -276,7 +281,7 @@ class TransformerDecoderLayer(nn.Module):
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None,
-                mixture_weight: Optional[Tensor] = None):
+                mixture_weight: List[Tensor] = []):
         if self.normalize_before:
             return self.forward_pre(tgt, memory, tgt_mask, memory_mask,
                                     tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
@@ -293,6 +298,7 @@ def build_transformer(args):
         d_model=args.hidden_dim,
         dropout=args.dropout,
         nhead=args.nheads,
+        nmixture=args.num_mixture_proj,
         dim_feedforward=args.dim_feedforward,
         num_encoder_layers=args.enc_layers,
         num_decoder_layers=args.dec_layers,

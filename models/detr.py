@@ -22,7 +22,7 @@ from .transformer import build_transformer
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
 
-    def __init__(self, backbone_v, backbone_r, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, verb_role_tgt_mask, use_verb_decoder, use_verb_fcn, use_mixture_proj, aux_loss=False):
+    def __init__(self, backbone_v, backbone_r, role_transformer, verb_transformer, num_classes, num_verb_embed, num_role_queries, gt_role_queries, verb_role_tgt_mask, use_verb_decoder, use_verb_fcn, num_mixture_proj, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -68,15 +68,13 @@ class DETR(nn.Module):
                 nn.Dropout(),
                 nn.Linear(4096, 504),
             )
-        if use_mixture_proj:
-            self.mixture_proj = nn.Linear(504, 8)
+        self.mixture_proj = nn.ModuleList([nn.Linear(504, nm) for nm in num_mixture_proj])
 
         self.backbone_v = backbone_v
         self.backbone_r = backbone_r
         self.aux_loss = aux_loss
         self.use_verb_decoder = use_verb_decoder
         self.use_verb_fcn = use_verb_fcn
-        self.use_mixture_proj = use_mixture_proj
 
     def forward(self, samples: NestedTensor, targets):
         """ The forward expects a NestedTensor, which consists of:
@@ -162,13 +160,10 @@ class DETR(nn.Module):
             decoder_tgt_mask = self.verb_role_tgt_mask
             decoder_memory_mask = None
 
-        if self.use_mixture_proj:
-            mixture_weight = F.softmax(self.mixture_proj(outputs_verb[-1]), dim=-1)
-            hs = self.role_transformer(
-                self.input_proj_r(src_r), mask_r, query_embed, pos_r[-1], decoder_tgt_mask, decoder_memory_mask, decoder_mixture_weight=mixture_weight)[0]
-        else:
-            hs = self.role_transformer(
-                self.input_proj_r(src_r), mask_r, query_embed, pos_r[-1], decoder_tgt_mask, decoder_memory_mask)[0]
+        mixture_weight = [F.softmax(mixture_proj(outputs_verb[-1]), dim=-1)
+                          for mixture_proj in self.mixture_proj]
+        hs = self.role_transformer(
+            self.input_proj_r(src_r), mask_r, query_embed, pos_r[-1], decoder_tgt_mask, decoder_memory_mask, decoder_mixture_weight=mixture_weight)[0]
         outputs_class = self.class_embed(hs)
         out.update({'pred_logits': outputs_class[-1]})
 
@@ -547,7 +542,7 @@ def build(args):
         verb_role_tgt_mask=verb_role_tgt_mask,
         use_verb_decoder=args.use_verb_decoder,
         use_verb_fcn=args.use_verb_fcn,
-        use_mixture_proj=args.use_mixture_proj,
+        num_mixture_proj=args.num_mixture_proj,
         aux_loss=args.aux_loss,
     )
     if args.masks:
