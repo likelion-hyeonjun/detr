@@ -68,6 +68,8 @@ def get_args_parser():
     parser.add_argument('--num_mixture_proj', type=int, nargs=2,
                         help="mixure projection matrix num, (self_attn, multihead_attn)."
                             "1 for not using maxtrix proj")
+    parser.add_argument('--share_mixture_proj', action='store_true',
+                        help="share the linear transform layer to mixture projection")
     parser.add_argument('--pre_norm', action='store_true')
 
     # * Segmentation
