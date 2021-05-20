@@ -13,6 +13,7 @@ from typing import Optional, List
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
+from torch.nn.modules.linear import _LinearWithBias
 
 
 class Transformer(nn.Module):
@@ -44,7 +45,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed, decoder_tgt_mask, decoder_memory_mask):
+    def forward(self, src, mask, query_embed, pos_embed, decoder_tgt_mask, decoder_memory_mask, decoder_mixture_weight):
         # flatten NxCxHxW to HWxNxC
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(2, 0, 1)
@@ -56,7 +57,8 @@ class Transformer(nn.Module):
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
 
         hs = self.decoder(tgt, memory, tgt_mask=decoder_tgt_mask, memory_mask=decoder_memory_mask,
-                          memory_key_padding_mask=mask, pos=pos_embed, query_pos=query_embed)
+                          memory_key_padding_mask=mask, pos=pos_embed, query_pos=query_embed,
+                          mixture_weight=decoder_mixture_weight)
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
 
 
@@ -99,7 +101,8 @@ class TransformerDecoder(nn.Module):
                 tgt_key_padding_mask: Optional[Tensor] = None,
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
-                query_pos: Optional[Tensor] = None):
+                query_pos: Optional[Tensor] = None,
+                mixture_weight: Optional[Tensor] = None,):
         output = tgt
         intermediate = []
 
@@ -108,7 +111,7 @@ class TransformerDecoder(nn.Module):
                            memory_mask=memory_mask,
                            tgt_key_padding_mask=tgt_key_padding_mask,
                            memory_key_padding_mask=memory_key_padding_mask,
-                           pos=pos, query_pos=query_pos)
+                           pos=pos, query_pos=query_pos, mixture_weight=mixture_weight)
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
 
@@ -190,8 +193,11 @@ class TransformerDecoderLayer(nn.Module):
                  activation="relu", normalize_before=False):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.self_attn.out_proj = _LinearWithBias(d_model, d_model * 8)
+        self.self_attn._reset_parameters()
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, add_zero_attn=True)
-        # Implementation of Feedforward model
+        self.multihead_attn.out_proj = _LinearWithBias(d_model, d_model * 8)
+        self.multihead_attn._reset_parameters()
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -215,16 +221,24 @@ class TransformerDecoderLayer(nn.Module):
                      tgt_key_padding_mask: Optional[Tensor] = None,
                      memory_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None,
-                     query_pos: Optional[Tensor] = None):
+                     query_pos: Optional[Tensor] = None,
+                     mixture_weight: Optional[Tensor] = None):
         q = k = self.with_pos_embed(tgt, query_pos)
         tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
                               key_padding_mask=tgt_key_padding_mask)[0]
+        # tgt2: query_size x batch_size x hidden_dim*num_mixture
+        tgt2 = torch.bmm(tgt2.transpose(0, 1).reshape(-1, 190 * 256, 8),
+                         mixture_weight.reshape(-1, 8, 1)).reshape(-1, 190, 256).transpose(0, 1)
+
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
         tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
                                    key_padding_mask=memory_key_padding_mask)[0]
+        tgt2 = torch.bmm(tgt2.transpose(0, 1).reshape(-1, 190 * 256, 8),
+                         mixture_weight.reshape(-1, 8, 1)).reshape(-1, 190, 256).transpose(0, 1)
+
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
@@ -261,12 +275,13 @@ class TransformerDecoderLayer(nn.Module):
                 tgt_key_padding_mask: Optional[Tensor] = None,
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
-                query_pos: Optional[Tensor] = None):
+                query_pos: Optional[Tensor] = None,
+                mixture_weight: Optional[Tensor] = None):
         if self.normalize_before:
             return self.forward_pre(tgt, memory, tgt_mask, memory_mask,
                                     tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
         return self.forward_post(tgt, memory, tgt_mask, memory_mask,
-                                 tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
+                                 tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos, mixture_weight=mixture_weight)
 
 
 def _get_clones(module, N):

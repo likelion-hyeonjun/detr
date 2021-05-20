@@ -21,7 +21,10 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
     parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
+    parser.add_argument('--optimizer', default="AdamW", type=str, choices=["AdamW", "Adamax"])
     parser.add_argument('--batch_size', default=2, type=int)
+    parser.add_argument('--scheduler', type=str, choices=["StepLR", "ExponentialLR"])
+    parser.add_argument('--gamma', default=0.9, type=float)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--lr_drop', default=200, type=int)
@@ -62,6 +65,7 @@ def get_args_parser():
                         help="Use role adjacency matrix as attention mask")
     parser.add_argument('--use_verb_decoder', action="store_true")
     parser.add_argument('--use_verb_fcn', action="store_true")
+    parser.add_argument('--use_mixture_proj', action="store_true")
     parser.add_argument('--pre_norm', action='store_true')
 
     # * Segmentation
@@ -151,9 +155,15 @@ def main(args):
             "lr": args.lr_backbone,
         },
     ]
-    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
-                                  weight_decay=args.weight_decay)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+    if args.optimizer == 'Adamw':
+        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
+                                    weight_decay=args.weight_decay)
+    elif args.optimizer == 'Adamax':
+        optimizer = torch.optim.Adamax(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
+    if args.scheduler == "StepLR":
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+    elif args.scheduler == "ExponentialLR":
+        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma)
 
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
@@ -178,17 +188,19 @@ def main(args):
         # batch_sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=args.batch_size, drop_last=True)  # TODO check drop_last
         # data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers, drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
         batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
+        batch_sampler_val = torch.utils.data.BatchSampler(sampler_val, args.batch_size, drop_last=False)
         data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
                                        collate_fn=collater, batch_sampler=batch_sampler_train)
         data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers,
-                                     drop_last=False, collate_fn=collater, sampler=sampler_val)
+                                     drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
     elif args.dataset_file == "imsitu":
         from datasets.imsitu import collater
         batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
+        batch_sampler_val = torch.utils.data.BatchSampler(sampler_val, args.batch_size, drop_last=False)
         data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
                                        collate_fn=collater, batch_sampler=batch_sampler_train)
         data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers,
-                                     drop_last=False, collate_fn=collater, sampler=sampler_val)
+                                     drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
 
     if args.dataset_file == "coco_panoptic":
         # We also evaluate AP during panoptic training, on original coco DS
