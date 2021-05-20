@@ -95,13 +95,28 @@ class DETR(nn.Module):
 
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
-        features_v, pos_v = self.backbone_v(samples)
-        features_r, pos_r = self.backbone_r(samples)
 
+        features_v, pos_v = self.backbone_v(samples)
         src_v, mask_v = features_v[-1].decompose()
-        src_r, mask_r = features_r[-1].decompose()
         device = src_v.device
         assert mask_v is not None
+        out = {}
+
+        if self.use_verb_fcn:
+            verb_hs = self.input_proj_v(src_v)
+            verb_hs = self.avg_pool(verb_hs)[None, :, None]
+        else:
+            verb_hs, verb_memory = self.verb_transformer(
+                self.input_proj_v(src_v), mask_v, self.verb_query_for_verb_decoder.weight, pos_v[-1], None, None)
+
+            if not self.use_verb_decoder:
+                verb_hs = self.avg_pool(verb_memory)[None, :, None, :, 0, 0]
+
+        outputs_verb = self.verb_classifier(verb_hs)
+        out.update({'pred_verb': outputs_verb[-1]})
+
+        features_r, pos_r = self.backbone_r(samples)
+        src_r, mask_r = features_r[-1].decompose()
         assert mask_r is not None
 
         if self.num_verb_embed == 0:
@@ -146,20 +161,9 @@ class DETR(nn.Module):
 
         hs = self.role_transformer(
             self.input_proj_r(src_r), mask_r, query_embed, pos_r[-1], decoder_tgt_mask, decoder_memory_mask)[0]
-        if self.use_verb_fcn:
-            verb_hs = self.input_proj_v(src_v)
-            verb_hs = self.avg_pool(verb_hs)[None, :, None]
-        else:
-            verb_hs, verb_memory = self.verb_transformer(
-                self.input_proj_v(src_v), mask_v, self.verb_query_for_verb_decoder.weight, pos_v[-1], None, None)
-
-            if not self.use_verb_decoder:
-                verb_hs = self.avg_pool(verb_memory)[None, :, None, :, 0, 0]
-
         outputs_class = self.class_embed(hs)
-        outputs_verb = self.verb_classifier(verb_hs)
+        out.update({'pred_logits': outputs_class[-1]})
 
-        out = {'pred_logits': outputs_class[-1], 'pred_verb': outputs_verb[-1]}
         return out
 
     @torch.jit.unused
