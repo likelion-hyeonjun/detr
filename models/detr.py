@@ -8,7 +8,7 @@ import torch
 from torch import nn
 
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       accuracy, accuracy_swig)
+                       masked_sum, masked_mean, masked_any, masked_all)
 
 from .backbone import build_backbone
 from .transformer import build_transformer
@@ -34,7 +34,14 @@ class DETR(nn.Module):
         hidden_dim = transformer.d_model
         self.nhead = transformer.nhead
         self.query_embed = nn.Embedding(num_verb_queries + num_role_queries, hidden_dim)
-        self.verb_linear = nn.Linear(hidden_dim, num_verbs)
+        # self.verb_linear = nn.Linear(hidden_dim, num_verbs)
+        from torchvision.models import vgg16_bn
+        vgg = vgg16_bn()
+        num_features = vgg.classifier[6].in_features
+        features = list(vgg.classifier.children())[:-1] # Remove last layer
+        features.extend([nn.Linear(num_features, num_verbs)]) # Add our layer with 4 outputs
+        features.insert(0, nn.Flatten(-3)) # Add our layer with 4 outputs
+        self.verb_linear = nn.Sequential(*features)
         self.noun_linear = nn.Linear(hidden_dim, num_nouns)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
@@ -66,30 +73,15 @@ class DETR(nn.Module):
         hs = self.transformer(
             self.input_proj(src), mask, self.query_embed.weight, pos[-1], decoder_tgt_mask, decoder_memory_mask)[0]
         verb_hs, role_hs = hs.split([self.num_verb_queries, self.num_role_queries], dim=2)
-
-        outputs_verb = self.verb_linear(verb_hs)
+        import pdb
+        pdb.set_trace()
+        outputs_verb = self.verb_linear(src)[None,:,None,:]
         out.update({'pred_verb': outputs_verb[-1]})
 
         outputs_class = self.noun_linear(role_hs)
         out.update({'pred_logits': outputs_class[-1]})
 
         return out
-
-
-def masked_sum(input, mask, dim):
-    return (input / mask).nansum(dim)
-
-
-def masked_mean(input, mask, dim):
-    return ((input / mask).nansum(dim) / mask.sum(dim)).nan_to_num(0)
-
-
-def masked_all(input, mask, dim):
-    return (input / mask).nansum(dim).eq(mask.sum(dim))
-
-
-def masked_any(input, mask, dim):
-    return (input / mask).nansum(dim).bool()
 
 
 class imSituCriterion(nn.Module):
@@ -124,8 +116,8 @@ class imSituCriterion(nn.Module):
         verb_loss = self.loss_function_for_verb(verb_pred_logits, gt_verbs)
         # batch_size x topk -> topk x batch_size
         verb_correct = verb_pred_logits.topk(topk)[1].eq(gt_verbs.unsqueeze(-1)).t().cumsum(0).bool()
-        # top1_verb = verb_correct[:1].any(0).float().mean()
-        # top5_verb = verb_correct[:5].any(0).float().mean()
+        import pdb
+        pdb.set_trace()
 
         assert 'pred_logits' in outputs
         # batch_size x num_roles x num_nouns
@@ -162,55 +154,6 @@ class imSituCriterion(nn.Module):
         # batch_size
         noun_correct_all = masked_all(noun_correct, lmask.any(-1), dim=-1)
         noun_acc = masked_mean(noun_correct, lmask.any(-1), dim=-1)
-
-        batch_noun_loss = []
-        batch_noun_acc = []
-        for p, t in zip(pred_logits, targets):
-            roles = t['roles']
-            num_roles = len(roles)
-            role_pred = p[roles]
-            role_targ = t['labels'][roles]
-            role_targ = role_targ.long()
-            batch_noun_acc += accuracy_swig(role_pred, role_targ)
-
-            role_noun_loss = []
-            for n in range(3):
-                role_noun_loss.append(self.loss_function_for_noun(role_pred, role_targ[:, n]))
-            batch_noun_loss.append(sum(role_noun_loss))
-        if not noun_loss.allclose(torch.stack(batch_noun_loss).mean()):
-            import pdb
-            pdb.set_trace()
-            noun_loss - torch.stack(batch_noun_loss).mean()
-        # assert (noun_loss == torch.stack(batch_noun_loss).mean()).all()
-        if not torch.stack(batch_noun_acc).mean().allclose(noun_acc.mean()*100):
-            import pdb
-            pdb.set_trace()
-            torch.stack(batch_noun_acc).mean() - (noun_acc*100).mean()
-        # assert (noun_acc.mean() == noun_correct_gt[:1].any(0).float().mean()).all()
-
-        batch_noun_acc_topk = []
-        for verbs in verb_pred_logits.topk(5)[1].transpose(0, 1):
-            batch_noun_acc = []
-            for v, p, t in zip(verbs, pred_logits, targets):
-                if v == t['verb']:
-                    roles = t['roles']
-                    num_roles = len(roles)
-                    role_targ = t['labels'][roles]
-                    role_targ = role_targ.long().cuda()
-                    role_pred = p[roles]
-                    batch_noun_acc += accuracy_swig(role_pred, role_targ)
-                else:
-                    batch_noun_acc += [torch.tensor(0., device=device)]
-            batch_noun_acc_topk.append(torch.stack(batch_noun_acc))
-        noun_acc_topk = torch.stack(batch_noun_acc_topk)
-        assert noun_acc_topk[0].mean().allclose(noun_acc_verb[0].mean()*100)
-        if not noun_acc_topk.sum(0).mean().allclose(noun_acc_verb[4].mean()*100):
-            import pdb
-            pdb.set_trace()
-
-        if noun_correct_all.float().mean():
-            import pdb
-            pdb.set_trace()
 
         stat = {'loss_vce': verb_loss,
                 'loss_nce': noun_loss,

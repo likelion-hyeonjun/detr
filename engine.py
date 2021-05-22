@@ -64,7 +64,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def evaluate_swig(model, criterion, postprocessors, data_loader, device, output_dir):
+def evaluate_swig(model, criterion, data_loader, device, output_dir):
     # TODO
     # Need check
     model.eval()

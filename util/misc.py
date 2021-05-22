@@ -428,94 +428,17 @@ def init_distributed_mode(args):
     setup_for_distributed(args.rank == 0)
 
 
-@torch.no_grad()
-def accuracy(output, target, topk=(1,), reduction='mean'):
-    """Computes the precision@k for the specified values of k"""
-    if target.numel() == 0:
-        return [torch.zeros([], device=output.device)]
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].any(0).float()
-        if reduction == 'mean':
-            correct_k = correct_k.mean(0)
-            res.append(correct_k)
-        elif reduction == 'none':
-            res.append(correct_k)
-    return res
+def masked_sum(input, mask, dim):
+    return (input / mask).nansum(dim)
 
 
-@torch.no_grad()
-def accuracy_swig(output, target, topk=(1,), ignore_index=-100, reduction='none|mean'):
-    """Computes the precision@k for the specified values of k"""
-    if target.numel() == 0:
-        return [torch.zeros([], device=output.device)]
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    # b x maxk -> b x maxk x target_num
-    pred_tile = pred.unsqueeze(2).tile(1, 1, target.shape[1])
-    # b x target_num -> b x maxk x target_num
-    target_tile = target.unsqueeze(1).tile(1, pred.shape[1], 1)
-    # b x maxk x target_num
-    correct_tile = pred_tile.eq(target_tile)
-    # b x maxk x target_num -> b x maxk -> maxk x b
-    correct = correct_tile.any(2).t()
-    
-    res = []
-    for k in topk:
-        correct_k = correct[:k].reshape(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
-    # assert output.dim() == 3
-    # assert target.dim() == 3
-    # assert reduction == 'none|mean'
-    # # output: batch_size x num_nouns x num_roles
-    # # target: batch_size x num_targets x num_roles
-    # assert output.transpose(0, 1).shape[1:] == target.transpose(0, 1).shape[1:]
-    # maxk = max(topk)
-    
-    # # batch_size x maxk x num_roles
-    # _, pred = output.topk(maxk, dim=1)
-    # # batch_size x maxk x num_targets x num_roles
-    # correct = pred.unsqueeze(2).eq(target.unsqueeze(1))
-    # # batch_size x maxk x num_roles -> maxk x batch_size x num_roles
-    # correct = correct.any(dim=2).transpose(0, 1)
-    # # batch_size x num_targets x num_roles -> batch_size x num_roles (effective target)
-    # denom = (target != ignore_index).any(1)
-
-    # res = []
-    # for k in topk:
-    #     # top k correct: batch_size x num_roles
-    #     correct_k = correct[:k].any(0).float()
-    #     # sum correct roles / num effective roles
-    #     correct_k = (correct_k.sum(1) / denom.sum(1))
-    #     res.append(correct_k)
-    # return res
+def masked_mean(input, mask, dim):
+    return ((input / mask).nansum(dim) / mask.sum(dim)).nan_to_num(0)
 
 
-def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corners=None):
-    # type: (Tensor, Optional[List[int]], Optional[float], str, Optional[bool]) -> Tensor
-    """
-    Equivalent to nn.functional.interpolate, but with support for empty batch sizes.
-    This will eventually be supported natively by PyTorch, and this
-    class can go away.
-    """
-    if float(torchvision.__version__[:3]) < 0.7:
-        if input.numel() > 0:
-            return torch.nn.functional.interpolate(
-                input, size, scale_factor, mode, align_corners
-            )
+def masked_any(input, mask, dim):
+    return (input / mask).nansum(dim).bool()
 
-        output_shape = _output_size(2, input, size, scale_factor)
-        output_shape = list(input.shape[:-2]) + list(output_shape)
-        return _new_empty_tensor(input, output_shape)
-    else:
-        return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
+
+def masked_all(input, mask, dim):
+    return (input / mask).nansum(dim).eq(mask.sum(dim))

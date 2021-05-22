@@ -23,9 +23,9 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-3, type=float)
     parser.add_argument('--optimizer', default="Adamax", type=str,
                         choices=["Adam", "AdamW", "Adamax", "SGD", "RmsProp"])
-    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--epochs', default=50, type=int)
-    parser.add_argument('--clip_max_norm', default=0.1, type=float,
+    parser.add_argument('--clip_max_norm', default=0.25, type=float,
                         help='gradient clipping max norm')
 
     # Model parameters
@@ -62,7 +62,7 @@ def get_args_parser():
 
     # * Loss coefficients
     parser.add_argument('--verb_loss_coef', default=1, type=float)
-    parser.add_argument('--noun_loss_coef', default=1, type=float)
+    parser.add_argument('--noun_loss_coef', default=0, type=float)
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='imsitu')
@@ -143,9 +143,9 @@ def main(args):
     batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
     batch_sampler_val = torch.utils.data.BatchSampler(sampler_val, args.batch_size, drop_last=False)
     data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
-                                    collate_fn=collater, batch_sampler=batch_sampler_train)
+                                   collate_fn=collater, batch_sampler=batch_sampler_train)
     data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers,
-                                    drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
+                                 drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
 
     if args.frozen_weights is not None:
         checkpoint = torch.load(args.frozen_weights, map_location='cpu')
@@ -158,7 +158,23 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
-        model_without_ddp.load_state_dict(checkpoint['model'])
+            # import pdb
+            # pdb.set_trace()
+            # state_dict = {}
+            # {k.replace('vgg_features', 'backbone.0.body'): v for k, v in checkpoint.items() if 'vgg_features' not in k}.keys()
+            # {k.replace('vgg_features', 'backbone.0.body'): v for k, v in checkpoint.items() if 'classifier' not in k}.keys()
+            # for k, v in checkpoint.items():
+            #     if 'vgg_features' in k:
+            #         state_dict[k.replace('vgg_features', 'backbone.0.body')] = v
+            # checkpoint
+            # [k for k in model_without_ddp.state_dict().keys() if 'backbone.0.body.features' in k]
+            # [k for k in checkpoint.keys()]
+            # model_without_ddp.load_state_dict({k.replace('vgg_features', 'backbone.0.body.features'): v for k, v in checkpoint.items() if 'vgg_features' in k}, strict=False)
+            model_without_ddp.backbone._modules['0'].body.load_state_dict(
+                {k.replace('vgg_features.', 'features.'): v for k, v in checkpoint.items() if 'vgg_features' in k}, strict=False)
+            model_without_ddp.verb_linear.load_state_dict(
+                {k.replace(f'classifier.{int(k[11])}', f'{int(k[11])+1}'): v for k, v in checkpoint.items() if 'classifier' in k}, strict=False)
+        # model_without_ddp.load_state_dict(checkpoint['model'])
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             args.start_epoch = checkpoint['epoch'] + 1
@@ -178,8 +194,8 @@ def main(args):
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm)
 
-        test_stats = evaluate(model, criterion, postprocessors,
-                                    data_loader_val, device, args.output_dir)
+        test_stats = evaluate_swig(model, criterion,
+                                   data_loader_val, device, args.output_dir)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
