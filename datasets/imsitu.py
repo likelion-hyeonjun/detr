@@ -272,9 +272,11 @@ def build(image_set, args):
 
     TRANSFORMS = {
         "train": transforms.Compose([
-            transforms.Resize(256),
-            transforms.RandomRotation(0),
-            transforms.RandomCrop(256),  # square crop
+            transforms.Resize(512),  # min edge 512 resize
+            transforms.RandomRotation(0)
+            ] + ([] if args.remove_crop else [
+                transforms.RandomCrop(512),  # square crop
+            ]) + [
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
             transforms.RandomGrayscale(p=0.2),
             transforms.RandomHorizontalFlip(),
@@ -282,14 +284,18 @@ def build(image_set, args):
             normalizer,
         ]),
         "val": transforms.Compose([
-            transforms.Scale(224),
-            transforms.CenterCrop(224),
+            transforms.Resize(512),
+            ] + ([] if args.remove_crop else [
+                transforms.CenterCrop(512),  # center square crop
+            ]) + [
             transforms.ToTensor(),
             normalizer,
         ]),
         "test": transforms.Compose([
-            transforms.Scale(224),
-            transforms.CenterCrop(224),
+            transforms.Resize(512),
+            ] + ([] if args.remove_crop else [
+                transforms.CenterCrop(512),  # center square crop
+            ]) + [
             transforms.ToTensor(),
             normalizer,
         ]),

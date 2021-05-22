@@ -68,6 +68,7 @@ def get_args_parser():
     parser.add_argument('--dataset_file', default='imsitu')
     parser.add_argument('--imsitu_path', type=str, default="imSitu")
     parser.add_argument('--image_dir', type=str, default="images")
+    parser.add_argument('--remove_crop', action='store_true')
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -143,7 +144,12 @@ def main(args):
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
-    batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
+    if args.remove_crop:
+        from datasets.swig import AspectRatioBasedSampler
+        # time too long
+        batch_sampler_train = AspectRatioBasedSampler(dataset_train, batch_size=args.batch_size, drop_last=True)
+    else:
+        batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
     batch_sampler_val = torch.utils.data.BatchSampler(sampler_val, args.batch_size, drop_last=False)
     data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
                                    collate_fn=collater, batch_sampler=batch_sampler_train)
