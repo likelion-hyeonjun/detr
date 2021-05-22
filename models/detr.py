@@ -73,8 +73,8 @@ class DETR(nn.Module):
         hs = self.transformer(
             self.input_proj(src), mask, self.query_embed.weight, pos[-1], decoder_tgt_mask, decoder_memory_mask)[0]
         verb_hs, role_hs = hs.split([self.num_verb_queries, self.num_role_queries], dim=2)
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
         outputs_verb = self.verb_linear(src)[None,:,None,:]
         out.update({'pred_verb': outputs_verb[-1]})
 
@@ -116,8 +116,8 @@ class imSituCriterion(nn.Module):
         verb_loss = self.loss_function_for_verb(verb_pred_logits, gt_verbs)
         # batch_size x topk -> topk x batch_size
         verb_correct = verb_pred_logits.topk(topk)[1].eq(gt_verbs.unsqueeze(-1)).t().cumsum(0).bool()
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
 
         assert 'pred_logits' in outputs
         # batch_size x num_roles x num_nouns
@@ -157,14 +157,14 @@ class imSituCriterion(nn.Module):
 
         stat = {'loss_vce': verb_loss,
                 'loss_nce': noun_loss,
-                'verb_top1_acc': verb_correct[0].float().mean(),
-                'noun_top1_acc': noun_acc_verb[0].mean(),
-                'noun_top1_acc_all': noun_correct_verb_all[0].float().mean(),
-                'verb_top5_acc': verb_correct[4].float().mean(),
-                'noun_top5_acc': noun_acc_verb[4].mean(),
-                'noun_top5_acc_all': noun_correct_verb_all[4].float().mean(),
-                'noun_gt_acc': noun_acc.mean(),
-                'noun_gt_acc_all': noun_correct_all.float().mean(),
+                'verb_top1_acc': verb_correct[0].float().mean()*100,
+                'noun_top1_acc': noun_acc_verb[0].mean()*100,
+                'noun_top1_acc_all': noun_correct_verb_all[0].float().mean()*100,
+                'verb_top5_acc': verb_correct[4].float().mean()*100,
+                'noun_top5_acc': noun_acc_verb[4].mean()*100,
+                'noun_top5_acc_all': noun_correct_verb_all[4].float().mean()*100,
+                'noun_gt_acc': noun_acc.mean()*100,
+                'noun_gt_acc_all': noun_correct_all.float().mean()*100,
                 'class_error': torch.tensor(0.).to(device)}
         stat.update({'mean_acc': torch.stack([v for k, v in stat.items() if 'acc' in k]).mean()})
 

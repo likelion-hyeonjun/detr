@@ -19,11 +19,11 @@ from models import build_model
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
-    parser.add_argument('--lr', default=5e-5, type=float)
-    parser.add_argument('--lr_backbone', default=1e-3, type=float)
+    parser.add_argument('--lr', default=1e-3, type=float)
+    parser.add_argument('--lr_backbone', default=5e-5, type=float)
     parser.add_argument('--optimizer', default="Adamax", type=str,
                         choices=["Adam", "AdamW", "Adamax", "SGD", "RmsProp"])
-    parser.add_argument('--batch_size', default=64, type=int)
+    parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--epochs', default=50, type=int)
     parser.add_argument('--clip_max_norm', default=0.25, type=float,
                         help='gradient clipping max norm')
@@ -110,7 +110,7 @@ def main(args):
 
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
