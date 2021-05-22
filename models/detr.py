@@ -34,14 +34,7 @@ class DETR(nn.Module):
         hidden_dim = transformer.d_model
         self.nhead = transformer.nhead
         self.query_embed = nn.Embedding(num_verb_queries + num_role_queries, hidden_dim)
-        # self.verb_linear = nn.Linear(hidden_dim, num_verbs)
-        from torchvision.models import vgg16_bn
-        vgg = vgg16_bn()
-        num_features = vgg.classifier[6].in_features
-        features = list(vgg.classifier.children())[:-1] # Remove last layer
-        features.extend([nn.Linear(num_features, num_verbs)]) # Add our layer with 4 outputs
-        features.insert(0, nn.Flatten(-3)) # Add our layer with 4 outputs
-        self.verb_linear = nn.Sequential(*features)
+        self.verb_linear = nn.Linear(hidden_dim, num_verbs)
         self.noun_linear = nn.Linear(hidden_dim, num_nouns)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
@@ -73,9 +66,8 @@ class DETR(nn.Module):
         hs = self.transformer(
             self.input_proj(src), mask, self.query_embed.weight, pos[-1], decoder_tgt_mask, decoder_memory_mask)[0]
         verb_hs, role_hs = hs.split([self.num_verb_queries, self.num_role_queries], dim=2)
-        # import pdb
-        # pdb.set_trace()
-        outputs_verb = self.verb_linear(src)[None,:,None,:]
+
+        outputs_verb = self.verb_linear(verb_hs)
         out.update({'pred_verb': outputs_verb[-1]})
 
         outputs_class = self.noun_linear(role_hs)
@@ -96,7 +88,6 @@ class imSituCriterion(nn.Module):
         self.pad_noun = pad_noun
         self.weight_dict = weight_dict
         self.loss_function = nn.CrossEntropyLoss(ignore_index=pad_noun, reduction='none')
-        self.loss_function_for_noun = nn.CrossEntropyLoss(ignore_index=pad_noun)
         self.loss_function_for_verb = nn.CrossEntropyLoss()
 
     def forward(self, outputs, targets):
@@ -157,14 +148,14 @@ class imSituCriterion(nn.Module):
 
         stat = {'loss_vce': verb_loss,
                 'loss_nce': noun_loss,
-                'verb_top1_acc': verb_correct[0].float().mean()*100,
-                'noun_top1_acc': noun_acc_verb[0].mean()*100,
-                'noun_top1_acc_all': noun_correct_verb_all[0].float().mean()*100,
-                'verb_top5_acc': verb_correct[4].float().mean()*100,
-                'noun_top5_acc': noun_acc_verb[4].mean()*100,
-                'noun_top5_acc_all': noun_correct_verb_all[4].float().mean()*100,
-                'noun_gt_acc': noun_acc.mean()*100,
-                'noun_gt_acc_all': noun_correct_all.float().mean()*100,
+                'verb_top1_acc': verb_correct[0].float().mul(100).mean(),
+                'noun_top1_acc': noun_acc_verb[0].mul(100).mean(),
+                'noun_top1_acc_all': noun_correct_verb_all[0].float().mul(100).mean(),
+                'verb_top5_acc': verb_correct[4].float().mul(100).mean(),
+                'noun_top5_acc': noun_acc_verb[4].mul(100).mean(),
+                'noun_top5_acc_all': noun_correct_verb_all[4].float().mul(100).mean(),
+                'noun_gt_acc': noun_acc.mul(100).mean(),
+                'noun_gt_acc_all': noun_correct_all.float().mul(100).mean(),
                 'class_error': torch.tensor(0.).to(device)}
         stat.update({'mean_acc': torch.stack([v for k, v in stat.items() if 'acc' in k]).mean()})
 

@@ -62,7 +62,7 @@ def get_args_parser():
 
     # * Loss coefficients
     parser.add_argument('--verb_loss_coef', default=1, type=float)
-    parser.add_argument('--noun_loss_coef', default=0, type=float)
+    parser.add_argument('--noun_loss_coef', default=1, type=float)
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='imsitu')
@@ -158,23 +158,6 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
-            # import pdb
-            # pdb.set_trace()
-            # state_dict = {}
-            # {k.replace('vgg_features', 'backbone.0.body'): v for k, v in checkpoint.items() if 'vgg_features' not in k}.keys()
-            # {k.replace('vgg_features', 'backbone.0.body'): v for k, v in checkpoint.items() if 'classifier' not in k}.keys()
-            # for k, v in checkpoint.items():
-            #     if 'vgg_features' in k:
-            #         state_dict[k.replace('vgg_features', 'backbone.0.body')] = v
-            # checkpoint
-            # [k for k in model_without_ddp.state_dict().keys() if 'backbone.0.body.features' in k]
-            # [k for k in checkpoint.keys()]
-            # model_without_ddp.load_state_dict({k.replace('vgg_features', 'backbone.0.body.features'): v for k, v in checkpoint.items() if 'vgg_features' in k}, strict=False)
-            model_without_ddp.backbone._modules['0'].body.load_state_dict(
-                {k.replace('vgg_features.', 'features.'): v for k, v in checkpoint.items() if 'vgg_features' in k}, strict=False)
-            model_without_ddp.verb_linear.load_state_dict(
-                {k.replace(f'classifier.{int(k[11])}', f'{int(k[11])+1}'): v for k, v in checkpoint.items() if 'classifier' in k}, strict=False)
-        # model_without_ddp.load_state_dict(checkpoint['model'])
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             args.start_epoch = checkpoint['epoch'] + 1
