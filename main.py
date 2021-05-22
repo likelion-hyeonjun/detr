@@ -10,24 +10,21 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
-import datasets
+from datasets.imsitu import collater
 import util.misc as utils
-from datasets import build_dataset, get_coco_api_from_dataset
-from engine import evaluate, train_one_epoch, evaluate_swig
+from datasets import build_dataset
+from engine import evaluate_swig, train_one_epoch
 from models import build_model
 
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
-    parser.add_argument('--lr', default=1e-4, type=float)
-    parser.add_argument('--lr_backbone', default=1e-5, type=float)
-    parser.add_argument('--optimizer', default="AdamW", type=str, choices=["AdamW", "Adamax"])
-    parser.add_argument('--batch_size', default=2, type=int)
-    parser.add_argument('--scheduler', type=str, choices=["StepLR", "ExponentialLR"])
-    parser.add_argument('--gamma', default=0.9, type=float)
-    parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=300, type=int)
-    parser.add_argument('--lr_drop', default=200, type=int)
+    parser.add_argument('--lr', default=5e-5, type=float)
+    parser.add_argument('--lr_backbone', default=1e-3, type=float)
+    parser.add_argument('--optimizer', default="Adamax", type=str,
+                        choices=["Adam", "AdamW", "Adamax", "SGD", "RmsProp"])
+    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--epochs', default=50, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
@@ -35,7 +32,7 @@ def get_args_parser():
     parser.add_argument('--frozen_weights', type=str, default=None,
                         help="Path to the pretrained model. If set, only the mask head will be trained")
     # * Backbone
-    parser.add_argument('--backbone', default='resnet50', type=str,
+    parser.add_argument('--backbone', default='vgg16_bn', type=str,
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--dilation', action='store_true',
                         help="If true, we replace stride with dilation in the last convolutional block (DC5)")
@@ -55,54 +52,21 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_verb_embed', type=int, choices=[504, 1, 0],
-                        help="Number of verb embed to cat role query slots")
-    parser.add_argument('--num_role_queries', type=int, choices=[190],
+    parser.add_argument('--num_verb_queries', type=int, default=1,
+                        help="Number of verb query slots")
+    parser.add_argument('--num_role_queries', type=int, default=190,
                         help="Number of role query slots")
-    parser.add_argument('--gt_role_queries', action="store_true",
-                        help="Select gt role queries")
     parser.add_argument('--use_role_adj_attn_mask', action="store_true",
                         help="Use role adjacency matrix as attention mask")
-    parser.add_argument('--use_verb_decoder', action="store_true")
-    parser.add_argument('--use_verb_fcn', action="store_true")
-    parser.add_argument('--num_mixture_proj', type=int, nargs=2,
-                        help="mixure projection matrix num, (self_attn, multihead_attn)."
-                            "1 for not using maxtrix proj")
-    parser.add_argument('--share_mixture_proj', action='store_true',
-                        help="share the linear transform layer to mixture projection")
     parser.add_argument('--pre_norm', action='store_true')
 
-    # * Segmentation
-    parser.add_argument('--masks', action='store_true',
-                        help="Train segmentation head if the flag is provided")
-
-    # Loss
-    parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
-                        help="Disables auxiliary decoding losses (loss at each layer)")
-    # * Matcher
-    parser.add_argument('--set_cost_class', default=1, type=float,
-                        help="Class coefficient in the matching cost")
-    parser.add_argument('--set_cost_bbox', default=5, type=float,
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--set_cost_giou', default=2, type=float,
-                        help="giou box coefficient in the matching cost")
     # * Loss coefficients
-    parser.add_argument('--mask_loss_coef', default=1, type=float)
-    parser.add_argument('--dice_loss_coef', default=1, type=float)
-    parser.add_argument('--bbox_loss_coef', default=5, type=float)
-    parser.add_argument('--giou_loss_coef', default=2, type=float)
-    parser.add_argument('--eos_coef', default=0.1, type=float,
-                        help="Relative classification weight of the no-object class")
-    parser.add_argument('--loss_ratio', default = 1, type=float,
-                        help="Relative loss ratio between noun-loss and verb-loss")
+    parser.add_argument('--verb_loss_coef', default=1, type=float)
+    parser.add_argument('--noun_loss_coef', default=1, type=float)
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='imsitu')
-    parser.add_argument('--coco_path', type=str)
-    parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--imsitu_path', type=str, default="imSitu")
-    parser.add_argument('--swig_path', type=str, default="SWiG")
-    parser.add_argument('--remove_difficult', action='store_true')
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -140,9 +104,8 @@ def main(args):
 
     dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
-    if args.dataset_file == "swig" or args.dataset_file == "imsitu":
-        args.num_classes = dataset_train.num_nouns()
-    model, criterion, postprocessors = build_model(args)
+
+    model, criterion = build_model(args)
     model.to(device)
 
     model_without_ddp = model
@@ -159,15 +122,16 @@ def main(args):
             "lr": args.lr_backbone,
         },
     ]
-    if args.optimizer == 'Adamw':
-        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
-                                    weight_decay=args.weight_decay)
+    if args.optimizer == 'Adam':
+        optimizer = torch.optim.Adam(param_dicts, lr=args.lr)
+    elif args.optimizer == 'Adamw':
+        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr)
     elif args.optimizer == 'Adamax':
-        optimizer = torch.optim.Adamax(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
-    if args.scheduler == "StepLR":
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
-    elif args.scheduler == "ExponentialLR":
-        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma)
+        optimizer = torch.optim.Adamax(param_dicts, lr=args.lr)
+    elif args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(param_dicts, lr=args.lr)
+    elif args.optimizer == 'RmsProp':
+        optimizer = torch.optim.RmsProp(param_dicts, lr=args.lr)
 
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
@@ -176,42 +140,12 @@ def main(args):
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
-    if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
-        batch_sampler_train = torch.utils.data.BatchSampler(
-            sampler_train, args.batch_size, drop_last=True)
-
-        data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                       collate_fn=utils.collate_fn, num_workers=args.num_workers)
-        data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
-                                     drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
-    elif args.dataset_file == "swig":
-        from datasets.swig import AspectRatioBasedSampler, collater
-        # time too long
-        # batch_sampler_train = AspectRatioBasedSampler(dataset_train, batch_size=args.batch_size, drop_last=True)
-        # data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers, collate_fn=collater, batch_sampler=batch_sampler_train)
-        # batch_sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=args.batch_size, drop_last=True)  # TODO check drop_last
-        # data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers, drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
-        batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
-        batch_sampler_val = torch.utils.data.BatchSampler(sampler_val, args.batch_size, drop_last=False)
-        data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
-                                       collate_fn=collater, batch_sampler=batch_sampler_train)
-        data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers,
-                                     drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
-    elif args.dataset_file == "imsitu":
-        from datasets.imsitu import collater
-        batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
-        batch_sampler_val = torch.utils.data.BatchSampler(sampler_val, args.batch_size, drop_last=False)
-        data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
-                                       collate_fn=collater, batch_sampler=batch_sampler_train)
-        data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers,
-                                     drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
-
-    if args.dataset_file == "coco_panoptic":
-        # We also evaluate AP during panoptic training, on original coco DS
-        coco_val = datasets.coco.build("val", args)
-        base_ds = get_coco_api_from_dataset(coco_val)
-    elif args.dataset_file == 'coco':
-        base_ds = get_coco_api_from_dataset(dataset_val)
+    batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
+    batch_sampler_val = torch.utils.data.BatchSampler(sampler_val, args.batch_size, drop_last=False)
+    data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
+                                    collate_fn=collater, batch_sampler=batch_sampler_train)
+    data_loader_val = DataLoader(dataset_val, num_workers=args.num_workers,
+                                    drop_last=False, collate_fn=collater, batch_sampler=batch_sampler_val)
 
     if args.frozen_weights is not None:
         checkpoint = torch.load(args.frozen_weights, map_location='cpu')
@@ -227,19 +161,10 @@ def main(args):
         model_without_ddp.load_state_dict(checkpoint['model'])
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
 
     if args.eval:
-        if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
-            test_stats, evaluator = evaluate(model, criterion, postprocessors,
-                                             data_loader_val, base_ds, device, args.output_dir)
-        elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
-            test_stats = evaluate_swig(model, criterion, postprocessors,
-                                       data_loader_val, device, args.output_dir)
-        if args.output_dir:
-            if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
-                utils.save_on_master(evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+        test_stats = evaluate_swig(model, criterion, data_loader_val, device, args.output_dir)
         return
 
     min_test_loss = np.inf
@@ -252,14 +177,9 @@ def main(args):
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm)
-        lr_scheduler.step()
 
-        if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
-            test_stats, evaluator = evaluate(model, criterion, postprocessors,
-                                             data_loader_val, base_ds, device, args.output_dir)
-        elif args.dataset_file == "swig" or args.dataset_file == "imsitu":
-            test_stats = evaluate_swig(model, criterion, postprocessors,
-                                       data_loader_val, device, args.output_dir)
+        test_stats = evaluate(model, criterion, postprocessors,
+                                    data_loader_val, device, args.output_dir)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
@@ -277,7 +197,6 @@ def main(args):
                 utils.save_on_master({
                     'model': model_without_ddp.state_dict(),
                     'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)
@@ -285,18 +204,6 @@ def main(args):
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
-
-            # for evaluation logs
-            # if evaluator is not None:
-            #     (output_dir / 'eval').mkdir(exist_ok=True)
-            #     if (args.dataset_file == "coco") or (args.dataset_file == "coco_panoptic"):
-            #         if "bbox" in evaluator.coco_eval:
-            #             filenames = ['latest.pth']
-            #         if epoch % 50 == 0:
-            #             filenames.append(f'{epoch:03}.pth')
-            #         for name in filenames:
-            #                 torch.save(evaluator.coco_eval["bbox"].eval,
-            #                         output_dir / "eval" / name)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

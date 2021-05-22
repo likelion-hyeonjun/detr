@@ -429,7 +429,7 @@ def init_distributed_mode(args):
 
 
 @torch.no_grad()
-def accuracy(output, target, topk=(1,)):
+def accuracy(output, target, topk=(1,), reduction='mean'):
     """Computes the precision@k for the specified values of k"""
     if target.numel() == 0:
         return [torch.zeros([], device=output.device)]
@@ -442,13 +442,17 @@ def accuracy(output, target, topk=(1,)):
 
     res = []
     for k in topk:
-        correct_k = correct[:k].reshape(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
+        correct_k = correct[:k].any(0).float()
+        if reduction == 'mean':
+            correct_k = correct_k.mean(0)
+            res.append(correct_k)
+        elif reduction == 'none':
+            res.append(correct_k)
     return res
 
 
 @torch.no_grad()
-def accuracy_swig(output, target, topk=(1,)):
+def accuracy_swig(output, target, topk=(1,), ignore_index=-100, reduction='none|mean'):
     """Computes the precision@k for the specified values of k"""
     if target.numel() == 0:
         return [torch.zeros([], device=output.device)]
@@ -464,12 +468,37 @@ def accuracy_swig(output, target, topk=(1,)):
     correct_tile = pred_tile.eq(target_tile)
     # b x maxk x target_num -> b x maxk -> maxk x b
     correct = correct_tile.any(2).t()
-
+    
     res = []
     for k in topk:
         correct_k = correct[:k].reshape(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+    # assert output.dim() == 3
+    # assert target.dim() == 3
+    # assert reduction == 'none|mean'
+    # # output: batch_size x num_nouns x num_roles
+    # # target: batch_size x num_targets x num_roles
+    # assert output.transpose(0, 1).shape[1:] == target.transpose(0, 1).shape[1:]
+    # maxk = max(topk)
+    
+    # # batch_size x maxk x num_roles
+    # _, pred = output.topk(maxk, dim=1)
+    # # batch_size x maxk x num_targets x num_roles
+    # correct = pred.unsqueeze(2).eq(target.unsqueeze(1))
+    # # batch_size x maxk x num_roles -> maxk x batch_size x num_roles
+    # correct = correct.any(dim=2).transpose(0, 1)
+    # # batch_size x num_targets x num_roles -> batch_size x num_roles (effective target)
+    # denom = (target != ignore_index).any(1)
+
+    # res = []
+    # for k in topk:
+    #     # top k correct: batch_size x num_roles
+    #     correct_k = correct[:k].any(0).float()
+    #     # sum correct roles / num effective roles
+    #     correct_k = (correct_k.sum(1) / denom.sum(1))
+    #     res.append(correct_k)
+    # return res
 
 
 def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corners=None):
