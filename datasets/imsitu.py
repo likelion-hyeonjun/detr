@@ -251,7 +251,7 @@ def collater(data):
 
 def build(image_set, args):
     root = Path(args.imsitu_path)
-    img_folder = root / "resized_256"
+    img_folder = root / args.image_dir
 
     PATHS = {
         "train": root / "train.json",
@@ -272,10 +272,11 @@ def build(image_set, args):
 
     TRANSFORMS = {
         "train": transforms.Compose([
-            transforms.Scale(224),
-            transforms.RandomCrop(224),
-            transforms.ColorJitter(brightness=0.2, contrast=0., saturation=0.2, hue=0.2),
-            transforms.RandomGrayscale(p=0.3),
+            transforms.Resize(256),
+            transforms.RandomRotation(0),
+            transforms.RandomCrop(256),  # square crop
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+            transforms.RandomGrayscale(p=0.2),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalizer,
