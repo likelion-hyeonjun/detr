@@ -25,7 +25,7 @@ def get_args_parser():
                         choices=["Adam", "AdamW", "Adamax", "SGD", "RmsProp"])
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--epochs', default=50, type=int)
-    parser.add_argument('--clip_max_norm', default=0.25, type=float,
+    parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
     # Model parameters
@@ -67,6 +67,7 @@ def get_args_parser():
     # dataset parameters
     parser.add_argument('--dataset_file', default='imsitu')
     parser.add_argument('--imsitu_path', type=str, default="imSitu")
+    parser.add_argument('--image_dir', type=str, default="images")
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -124,7 +125,7 @@ def main(args):
     ]
     if args.optimizer == 'Adam':
         optimizer = torch.optim.Adam(param_dicts, lr=args.lr)
-    elif args.optimizer == 'Adamw':
+    elif args.optimizer == 'AdamW':
         optimizer = torch.optim.AdamW(param_dicts, lr=args.lr)
     elif args.optimizer == 'Adamax':
         optimizer = torch.optim.Adamax(param_dicts, lr=args.lr)
@@ -132,6 +133,8 @@ def main(args):
         optimizer = torch.optim.SGD(param_dicts, lr=args.lr)
     elif args.optimizer == 'RmsProp':
         optimizer = torch.optim.RmsProp(param_dicts, lr=args.lr)
+    else:
+        assert False
 
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
