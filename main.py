@@ -32,7 +32,7 @@ def get_args_parser():
     parser.add_argument('--frozen_weights', type=str, default=None,
                         help="Path to the pretrained model. If set, only the mask head will be trained")
     # * Backbone
-    parser.add_argument('--backbone', default='vgg16_bn', type=str,
+    parser.add_argument('--backbone', default='resnet50', type=str,
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--dilation', action='store_true',
                         help="If true, we replace stride with dilation in the last convolutional block (DC5)")
@@ -65,9 +65,10 @@ def get_args_parser():
     parser.add_argument('--noun_loss_coef', default=1, type=float)
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default='imsitu')
+    parser.add_argument('--dataset_file', default='swig')
     parser.add_argument('--imsitu_path', type=str, default="imSitu")
-    parser.add_argument('--image_dir', type=str, default="images")
+    parser.add_argument('--swig_path', type=str, default="SWiG")
+    parser.add_argument('--image_dir', type=str, default="images_512")
     parser.add_argument('--remove_crop', action='store_true')
 
     parser.add_argument('--output_dir', default='',
@@ -125,15 +126,15 @@ def main(args):
         },
     ]
     if args.optimizer == 'Adam':
-        optimizer = torch.optim.Adam(param_dicts, lr=args.lr)
+        optimizer = torch.optim.Adam(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
     elif args.optimizer == 'AdamW':
-        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr)
+        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
     elif args.optimizer == 'Adamax':
-        optimizer = torch.optim.Adamax(param_dicts, lr=args.lr)
+        optimizer = torch.optim.Adamax(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
     elif args.optimizer == 'SGD':
-        optimizer = torch.optim.SGD(param_dicts, lr=args.lr)
+        optimizer = torch.optim.SGD(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
     elif args.optimizer == 'RMSprop':
-        optimizer = torch.optim.RMSprop(param_dicts, lr=args.lr)
+        optimizer = torch.optim.RMSprop(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
     else:
         assert False
 
@@ -144,12 +145,7 @@ def main(args):
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
-    if args.remove_crop:
-        from datasets.swig import AspectRatioBasedSampler
-        # time too long
-        batch_sampler_train = AspectRatioBasedSampler(dataset_train, batch_size=args.batch_size, drop_last=True)
-    else:
-        batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
+    batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
     batch_sampler_val = torch.utils.data.BatchSampler(sampler_val, args.batch_size, drop_last=False)
     data_loader_train = DataLoader(dataset_train, num_workers=args.num_workers,
                                    collate_fn=collater, batch_sampler=batch_sampler_train)
