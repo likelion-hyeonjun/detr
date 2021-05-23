@@ -1,11 +1,9 @@
 from __future__ import print_function, division
-import sys
-import os
+
 import torch
 import numpy as np
 import random
 import csv
-import pdb
 from pathlib import Path
 
 from torch.utils.data import Dataset
@@ -13,10 +11,6 @@ from torchvision import transforms
 from torchvision.transforms import functional as F
 from torch.utils.data.sampler import Sampler
 
-import skimage.io
-import skimage.transform
-import skimage.color
-import skimage
 import json
 from PIL import Image
 import util.misc as utils
@@ -142,7 +136,6 @@ class imSituDataset(Dataset):
         verb_role_idx = self.vidx_ridx[verb_idx]
         sample = {'img': img, 'annot': annot,
                   'img_name': self.image_names[idx], 'verb_idx': verb_idx, 'verb_role_idx': verb_role_idx}
-        import pdb
         if self.transform:
             sample['img'] = self.transform(sample['img'])
         return sample
@@ -316,7 +309,7 @@ def build(image_set, args):
                             verb_info=verb_orders,
                             transform=tfs)
     args.vr_adj_mat = dataset.verb_role_adj_matrix
-    args.vr_adj_mat = dataset.verb_role_adj_matrix
+    args.r_adj_mat = dataset.role_adj_matrix
     args.num_verbs = dataset.num_verbs
     args.num_roles = dataset.num_roles
     args.num_nouns = dataset.num_nouns

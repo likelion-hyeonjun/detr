@@ -164,7 +164,7 @@ class imSituCriterion(nn.Module):
 
 def build(args):
     if args.use_role_adj_attn_mask:
-        verb_role_tgt_mask = torch.tensor(~args.vr_adj_mat.any(0))
+        verb_role_tgt_mask = torch.tensor(~args.r_adj_mat)
     else:
         verb_role_tgt_mask = None
 
