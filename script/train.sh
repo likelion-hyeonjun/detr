@@ -1,13 +1,13 @@
 git checkout parallel_srtr
 
-# sandia (RTX3090 24GB x1)
-NAME="base"
+# cluster3 (titanxp 12GB x4)
+NAME="vgg16bn_MinMax_256_350"
 rm -f log/${NAME}.log dist/${NAME}
 rm -rf log/${NAME}
 
-CUDA_VISIBLE_DEVICES="0" python -m torch.distributed.launch --nproc_per_node=1 --use_env main.py \
-    --backbone resnet50 \
-    --batch_size 32 \
+CUDA_VISIBLE_DEVICES="0,1,2,3" python -m torch.distributed.launch --nproc_per_node=4 --use_env main.py \
+    --backbone vgg16_bn \
+    --batch_size 16 \
     --optimizer Adam \
     --lr 1e-4 \
     --lr_backbone 1e-5 \
