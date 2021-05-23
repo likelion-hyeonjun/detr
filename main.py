@@ -21,8 +21,9 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
     parser.add_argument('--lr', default=1e-3, type=float)
     parser.add_argument('--lr_backbone', default=5e-5, type=float)
-    parser.add_argument('--optimizer', default="Adamax", type=str,
-                        choices=["Adam", "AdamW", "Adamax", "SGD", "RMSprop"])
+    parser.add_argument('--optimizer', type=str, required=True,
+                        choices=["SGD", "RMSprop", "Adam", "AdamW", "Adamax"])
+    parser.add_argument('--weight_decay', default=0.0, type=float)
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--epochs', default=50, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
