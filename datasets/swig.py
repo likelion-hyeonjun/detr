@@ -289,7 +289,7 @@ def build(image_set, args):
     rotation = transforms.RandomRotation(0)
     hflip = transforms.RandomHorizontalFlip(0)
     
-    resize = MinMaxResize(512, 700)
+    resize = MinMaxResize(256, 350)
     to_tensor = transforms.ToTensor()
     normalizer = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 

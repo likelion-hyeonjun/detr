@@ -68,7 +68,7 @@ def get_args_parser():
     # dataset parameters
     parser.add_argument('--dataset_file', default='swig')
     parser.add_argument('--swig_path', type=str, default="SWiG")
-    parser.add_argument('--image_dir', type=str, default="images_512")
+    parser.add_argument('--image_dir', type=str, default="images")
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
