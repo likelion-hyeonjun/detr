@@ -1,11 +1,11 @@
 git checkout parallel_srtr
 
 # titanxp ()
-for OPTIM in "Adam" "AdamW" "Adamax" "RMSprop" "SGD";
+for OPTIM in "Adam" "AdamW" "Adamax";
 do
     echo $OPTIM
 
-    NAME="base_${OPTIM}"
+    NAME="vgg16bn_${OPTIM}"
     rm -rf log/"titanxp_${NAME}"
     python run_with_submitit.py \
         --backbone resnet50 \
@@ -22,7 +22,7 @@ do
         --job_dir log/"titanxp_${NAME}"
 
     # 2080ti 8
-    NAME="base_${OPTIM}"
+    NAME="vgg16bn_${OPTIM}"
     rm -rf log/"2080ti_${NAME}"
     python run_with_submitit.py \
         --backbone resnet50 \
