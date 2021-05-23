@@ -302,7 +302,7 @@ def build(image_set, args):
 
     TRANSFORMS = {
         "train": transforms.Compose([color, rotation, hflip,
-                                     resize, to_tensor, ]),
+                                     resize, to_tensor, normalizer]),
         "val": transforms.Compose([resize, to_tensor, normalizer]),
         "test": transforms.Compose([resize, to_tensor, normalizer]),
     }
