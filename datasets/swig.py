@@ -210,7 +210,7 @@ class imSituDataset(Dataset):
 
 
 def collater(data):
-    return ([s['img'] for s in data],
+    return (utils.utils.nested_tensor_from_tensor_list([s['img'] for s in data]),
             [{'verb': torch.tensor(s['verb_idx']),
               'roles': torch.tensor(s['verb_role_idx']),
               'img_name': s['img_name'],
