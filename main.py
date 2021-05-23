@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
-from datasets.imsitu import collater
+from datasets.swig import collater
 import util.misc as utils
 from datasets import build_dataset
 from engine import evaluate_swig, train_one_epoch
@@ -67,10 +67,8 @@ def get_args_parser():
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='swig')
-    parser.add_argument('--imsitu_path', type=str, default="imSitu")
     parser.add_argument('--swig_path', type=str, default="SWiG")
     parser.add_argument('--image_dir', type=str, default="images_512")
-    parser.add_argument('--remove_crop', action='store_true')
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
