@@ -125,7 +125,7 @@ class imSituCriterion(nn.Module):
             labels[:, :, n]  # batch_size x num_roles
         ) for n in range(3)], axis=2)
         # batch_size x num_roles
-        noun_loss = masked_sum(noun_loss, lmask, dim=-1)
+        noun_loss = masked_mean(noun_loss, lmask, dim=-1)
         # batch_size
         noun_loss = masked_mean(noun_loss, lmask.any(-1), dim=-1)
         # ()
