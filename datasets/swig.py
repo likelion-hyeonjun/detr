@@ -316,7 +316,7 @@ def build(image_set, args):
         transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.05),
         transforms.RandomGrayscale(p=0.3)])
     rotation = transforms.RandomRotation(0)
-    hflip = transforms.RandomHorizontalFlip(0)
+    hflip = transforms.RandomHorizontalFlip()
 
     resize = MinMaxResize(256, 350)
     resize_scale = MinMaxResizeScale(256, 350, [1.0, 0.75, 0.5])
