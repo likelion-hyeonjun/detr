@@ -85,6 +85,11 @@ def get_args_parser():
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+
+    # analysis parameters
+    parser.add_argument('--csv_folder', default ="",
+                        help='name of attention weight csv file', type=str)
+    parser.add_argument('--extract_attention', action='store_true')
     return parser
 
 
@@ -167,7 +172,7 @@ def main(args):
             args.start_epoch = checkpoint['epoch'] + 1
 
     if args.eval:
-        test_stats = evaluate_swig(model, criterion, data_loader_val, device, args.output_dir)
+        test_stats = evaluate_swig(model, criterion, data_loader_val, device, args.output_dir,  csv_folder = args.csv_folder, need_weights=args.extract_attention)
         return
 
     min_test_loss = np.inf

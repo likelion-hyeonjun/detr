@@ -39,7 +39,7 @@ class DETR(nn.Module):
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
 
-    def forward(self, samples: NestedTensor):
+    def forward(self, samples: NestedTensor, need_weights=False):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -63,8 +63,8 @@ class DETR(nn.Module):
         decoder_memory_mask = None
 
         # hs: num_layers x batch_size x len(query_embed) x hidden_dim
-        hs = self.transformer(
-            self.input_proj(src), mask, self.query_embed.weight, pos[-1], decoder_tgt_mask, decoder_memory_mask)[0]
+        hs, attn, img_attn = self.transformer(
+            self.input_proj(src), mask, self.query_embed.weight, pos[-1], decoder_tgt_mask, decoder_memory_mask, need_weights)
         verb_hs, role_hs = hs.split([self.num_verb_queries, self.num_role_queries], dim=2)
 
         outputs_verb = self.verb_linear(verb_hs)
@@ -73,7 +73,9 @@ class DETR(nn.Module):
         outputs_class = self.noun_linear(role_hs)
         out.update({'pred_logits': outputs_class[-1]})
 
-        return out
+        if need_weights:
+            return out, attn, img_attn
+        return out, None, None 
 
 
 class imSituCriterion(nn.Module):
