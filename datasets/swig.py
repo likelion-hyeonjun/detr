@@ -1,5 +1,7 @@
 from __future__ import print_function, division
 
+from typing import List
+
 import torch
 import numpy as np
 import random
@@ -211,6 +213,33 @@ def collater(data):
              for s in data])
 
 
+class MinMaxResizeScale(torch.nn.Module):
+    def __init__(self, min_edge: int, max_edge: int, scales: List[int] = [1.0, 0.75, 0.5]):
+        super().__init__()
+        assert min_edge < max_edge
+        self.min_edge = min_edge
+        self.max_edge = max_edge
+        self.scales = scales
+
+    def forward(self, img):
+        min_edge = min(img.size)
+        max_edge = max(img.size)
+        scale = random.choice(self.scales)
+
+        # (min, max) -> (min_edge, max * min_edge / max)
+        # resized_max = (max_edge * self.min_edge) / min_edge
+        if (max_edge * self.min_edge) > (self.max_edge * min_edge):
+            # resized_max > max_edge
+            size = int(round((min_edge * self.max_edge * scale) / max_edge))
+            if img.size[0] < img.size[1]:
+                # F.resize(w x h, [h, w])
+                return F.resize(img, [int(round(self.max_edge*scale)), size])
+            else:
+                return F.resize(img, [size, int(round(self.max_edge*scale))])
+        else:
+            return F.resize(img, self.min_edge)
+
+
 class MinMaxResize(torch.nn.Module):
     def __init__(self, min_edge: int, max_edge: int):
         super().__init__()
@@ -288,14 +317,15 @@ def build(image_set, args):
         transforms.RandomGrayscale(p=0.3)])
     rotation = transforms.RandomRotation(0)
     hflip = transforms.RandomHorizontalFlip(0)
-    
+
     resize = MinMaxResize(256, 350)
+    resize_scale = MinMaxResizeScale(256, 350, [1.0, 0.75, 0.5])
     to_tensor = transforms.ToTensor()
     normalizer = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     TRANSFORMS = {
         "train": transforms.Compose([color, rotation, hflip,
-                                     resize, to_tensor, normalizer]),
+                                     resize_scale, to_tensor, normalizer]),
         "val": transforms.Compose([resize, to_tensor, normalizer]),
         "test": transforms.Compose([resize, to_tensor, normalizer]),
     }
